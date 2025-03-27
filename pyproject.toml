@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "innieme_bot"
+version = "0.1.0"
+description = "Your bot description"
+requires-python = ">=3.9"
+dependencies = [
+    # Your dependencies here
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    # Other development dependencies
+]

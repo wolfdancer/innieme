@@ -1,7 +1,7 @@
 import os
 import pytest
 import asyncio
-from document_processor import DocumentProcessor
+from innieme_bot.document_processor import DocumentProcessor
 
 # Test data directory
 TEST_DOCS_DIR = "test_documents"
