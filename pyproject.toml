@@ -16,3 +16,6 @@ dev = [
     "pytest",
     # Other development dependencies
 ]
+
+[project.scripts]
+innieme_bot = "innieme_bot.innieme_bot:main"
