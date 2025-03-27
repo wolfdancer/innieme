@@ -22,7 +22,14 @@ intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Initialize components
-document_processor = DocumentProcessor(DOCS_DIR)
+document_processor = DocumentProcessor(DOCS_DIR, embedding_type="fake")
+''' for OpenAI embeddings
+document_processor = DocumentProcessor(
+    DOCS_DIR, 
+    embedding_type="openai",
+    embedding_config={"api_key": os.getenv("OPENAI_API_KEY")}
+)
+'''
 knowledge_manager = KnowledgeManager()
 conversation_engine = ConversationEngine(document_processor, knowledge_manager, ADMIN_ID)
 

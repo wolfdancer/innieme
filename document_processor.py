@@ -1,22 +1,51 @@
 import os
 import glob
 import asyncio
-import PyPDF2
+import pypdf
 import docx
 import numpy as np
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import FakeEmbeddings  # Simple in-memory embedding
+from langchain_core.embeddings import Embeddings  # Base class for embeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 class DocumentProcessor:
-    def __init__(self, docs_dir):
+    def __init__(self, docs_dir, embedding_type="fake", embedding_config=None):
+        """
+        Initialize document processor with configurable embeddings
+        
+        Args:
+            docs_dir (str): Directory containing documents to process
+            embedding_type (str): Type of embedding to use ('fake', 'openai', etc.)
+            embedding_config (dict, optional): Configuration for the embedding
+        """
         self.docs_dir = docs_dir
-        self.embeddings = OpenAIEmbeddings()
+        self.embedding_type = embedding_type
+        self.embedding_config = embedding_config or {}
+        self.embeddings = self._get_embeddings()
         self.vectorstore = None
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200
         )
+    
+    def _get_embeddings(self):
+        """
+        Factory method to get embeddings based on configuration
+        
+        Returns:
+            Embeddings: An instance of embeddings
+        """
+        if self.embedding_type == "openai":
+            # Only import if needed
+            from langchain_openai import OpenAIEmbeddings
+            api_key = self.embedding_config.get("api_key", os.getenv("OPENAI_API_KEY"))
+            return OpenAIEmbeddings(openai_api_key=api_key)
+        elif self.embedding_type == "fake":
+            # Simple embedding for testing
+            return FakeEmbeddings(size=1536)  # OpenAI compatible dimension
+        else:
+            raise ValueError(f"Unsupported embedding type: {self.embedding_type}")
         
     async def scan_and_vectorize(self):
         """Scan all documents in the specified directory and create vector embeddings"""
@@ -41,9 +70,26 @@ class DocumentProcessor:
         
         # Create vector store
         texts = [chunk["text"] for chunk in all_chunks]
-        metadatas = [{"source": chunk["source"]} for chunk in all_chunks]
         
-        self.vectorstore = FAISS.from_texts(texts, self.embeddings, metadatas=metadatas)
+        if not texts:
+            # Handle empty directory case by creating an empty FAISS index
+            print("No texts found to vectorize, creating empty index")
+            import faiss
+            dimension = 1536  # Same as OpenAI embeddings dimension
+            index = faiss.IndexFlatL2(dimension)
+            
+            # Create empty FAISS instance
+            from langchain_community.vectorstores.faiss import FAISS as LangchainFAISS
+            self.vectorstore = LangchainFAISS(
+                embedding_function=self.embeddings,
+                index=index,
+                docstore={},
+                index_to_docstore_id={}
+            )
+        else:
+            metadatas = [{"source": chunk["source"]} for chunk in all_chunks]
+            self.vectorstore = FAISS.from_texts(texts, self.embeddings, metadatas=metadatas)
+        
         return True
     
     async def _extract_text(self, file_path):
@@ -68,7 +114,7 @@ class DocumentProcessor:
         """Extract text from a PDF file"""
         text = ""
         with open(file_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
+            reader = pypdf.PdfReader(file)
             for page_num in range(len(reader.pages)):
                 page = reader.pages[page_num]
                 text += page.extract_text() + "\n"
