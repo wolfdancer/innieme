@@ -1,0 +1,24 @@
+# Discord API
+discord.py>=2.3.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Document processing
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+langchain>=0.0.267
+langchain-openai>=0.0.5
+
+# Vector database
+faiss-cpu>=1.7.4
+
+# OpenAI embeddings
+openai>=1.0.0
+
+# Async support
+asyncio>=3.4.3
+
+# Utilities
+numpy>=1.24.0
+uuid>=1.30
