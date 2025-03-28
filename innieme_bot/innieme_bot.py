@@ -2,10 +2,9 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-import asyncio
-from document_processor import DocumentProcessor
-from conversation_engine import ConversationEngine
-from knowledge_manager import KnowledgeManager
+from .document_processor import DocumentProcessor
+from .conversation_engine import ConversationEngine
+from .knowledge_manager import KnowledgeManager
 
 # Load environment variables
 load_dotenv()
