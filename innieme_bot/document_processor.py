@@ -53,14 +53,18 @@ class DocumentProcessor:
         
         # Get all files with common document extensions
         files = []
-        for ext in ['*.pdf', '*.docx', '*.txt']:
+        for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
             files.extend(glob.glob(os.path.join(self.docs_dir, '**', ext), recursive=True))
         
+        print(f"Found {len(files)} documents to process")
         # Process each file based on its type
         for file_path in files:
+            print(f"Processing {file_path}")
             text = await self._extract_text(file_path)
             if text:
                 document_texts.append({"text": text, "source": file_path})
+            else:
+                print(f"Text extraction failed for {file_path}")
         
         # Split texts into chunks
         all_chunks = []
@@ -101,7 +105,7 @@ class DocumentProcessor:
                 return await self._extract_from_pdf(file_path)
             elif ext.lower() == '.docx':
                 return await self._extract_from_docx(file_path)
-            elif ext.lower() == '.txt':
+            elif ext.lower() == '.txt' or ext.lower() == '.md':
                 return await self._extract_from_txt(file_path)
             else:
                 print(f"Unsupported file format: {file_path}")
