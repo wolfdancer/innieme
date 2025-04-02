@@ -4,7 +4,7 @@ import sys
 
 # Set up environment variables before importing the bot
 os.environ['DISCORD_TOKEN'] = 'test_token'
-os.environ['ADMIN_USER_ID'] = 'shane_999'
+os.environ['ADMIN_USER_ID'] = '123456789'
 os.environ['DOCUMENTS_DIRECTORY'] = './test_documents'
 os.environ['GUILD_ID'] = '987654321'
 os.environ['CHANNEL_ID'] = '456789123'
@@ -26,7 +26,7 @@ def test_bot_initialization():
     
     # Check if conversation engine is initialized
     assert conversation_engine is not None
-    assert conversation_engine.admin_id == 'shane_999'
+    assert conversation_engine.admin_id == 123456789
 
 def test_bot_intents():
     """Test that the bot has the required intents"""

@@ -78,7 +78,46 @@ async def on_ready():
         if channel:
             await channel.send("Bot is online and ready to assist!")
 
-# Rest of the code remains the same...
+@bot.event
+async def on_message(message):
+    # Ignore messages from the bot itself
+    if message.author == bot.user:
+        return
+    
+    # Check if bot is mentioned
+    if bot.user.mentioned_in(message):
+        # If message is in a thread, use that thread
+        # Otherwise create a new thread
+        if message.channel.type == discord.ChannelType.public_thread:
+            thread = message.channel
+        else:
+            thread = await message.create_thread(name=f"Chat with {message.author.display_name}")
+        
+        # Process the query and respond
+        query = message.content.replace(f'<@{bot.user.id}>', '').strip()
+        response = await conversation_engine.process_query(query, message.author.id, thread.id)
+        await thread.send(response)
+    
+    # Check for admin commands
+    elif message.author.id == ADMIN_ID and "summary and file" in message.content.lower():
+        # This command should be used in a thread
+        if message.channel.type == discord.ChannelType.public_thread:
+            summary = await knowledge_manager.generate_summary(message.channel.id)
+            await message.channel.send(f"Summary generated:\n\n{summary}\n\nApprove to add to knowledge base? (yes/no)")
+    
+    # Check for consultation requests
+    elif "please consult outie" in message.content.lower():
+        if message.channel.type == discord.ChannelType.public_thread:
+            admin_user = bot.get_user(ADMIN_ID)
+            await message.channel.send(f"<@{ADMIN_ID}> Your consultation has been requested in this thread.")
+    
+    await bot.process_commands(message)
+
+@bot.command(name='approve')
+async def approve_summary(ctx):
+    if ctx.author.id == ADMIN_ID and ctx.channel.type == discord.ChannelType.public_thread:
+        await knowledge_manager.store_summary(ctx.channel.id)
+        await ctx.send("Summary approved and added to knowledge base.")
 
 def main():
     bot.run(TOKEN)
