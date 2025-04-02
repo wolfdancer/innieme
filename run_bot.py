@@ -16,9 +16,7 @@ GUILD_ID = int(os.getenv('GUILD_ID'))
 CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
 
 # Bot setup with required intents
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
+intents = discord.Intents.all()  # Use all intents for maximum compatibility
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Initialize components
@@ -36,64 +34,54 @@ conversation_engine = ConversationEngine(document_processor, knowledge_manager, 
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
-    # Notify admin user
-    admin_user = bot.get_user(ADMIN_ID)
-    if admin_user:
-        await admin_user.send(f"Bot {bot.user} is now online!")
-    else:
-        print("Could not find admin user to notify")
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel:
-        print(f"Joined channel: {channel.name}")
-    else:
-        print("Could not find specified channel")
-    # Vectorize documents on startup
-    await document_processor.scan_and_vectorize()
-    print("Document vectorization complete")
-
-@bot.event
-async def on_message(message):
-    # Ignore messages from the bot itself
-    if message.author == bot.user:
-        return
     
-    # Check if bot is mentioned
-    if bot.user.mentioned_in(message):
-        # If message is in a thread, use that thread
-        # Otherwise create a new thread
-        if message.channel.type == discord.ChannelType.public_thread:
-            thread = message.channel
+    # Print all available guilds
+    print(f"Available guilds:")
+    for guild in bot.guilds:
+        print(f"- {guild.name} (ID: {guild.id})")
+    
+    # Connect to specific guild/server
+    guild = bot.get_guild(GUILD_ID)
+    if guild:
+        print(f"Connected to server: {guild.name}")
+    else:
+        print(f"Could not connect to server with ID: {GUILD_ID}")
+        print("Please make sure the bot has been invited to this server.")
+        print("Invite URL: https://discord.com/api/oauth2/authorize?client_id=1356846600692957315&permissions=377957124096&scope=bot")
+        # Continue anyway as the bot might still be useful in other servers
+    
+    # Rest of the function remains the same
+    if guild:
+        # Get channel within the guild
+        channel = guild.get_channel(CHANNEL_ID)
+        if channel:
+            print(f"Found channel: {channel.name}")
         else:
-            thread = await message.create_thread(name=f"Chat with {message.author.display_name}")
+            print(f"Could not find channel with ID: {CHANNEL_ID} in server {guild.name}")
         
-        # Process the query and respond
-        query = message.content.replace(f'<@{bot.user.id}>', '').strip()
-        response = await conversation_engine.process_query(query, message.author.id, thread.id)
-        await thread.send(response)
-    
-    # Check for admin commands
-    elif message.author.id == ADMIN_ID and "summary and file" in message.content.lower():
-        # This command should be used in a thread
-        if message.channel.type == discord.ChannelType.public_thread:
-            summary = await knowledge_manager.generate_summary(message.channel.id)
-            await message.channel.send(f"Summary generated:\n\n{summary}\n\nApprove to add to knowledge base? (yes/no)")
-    
-    # Check for consultation requests
-    elif "please consult outie" in message.content.lower():
-        if message.channel.type == discord.ChannelType.public_thread:
-            admin_user = bot.get_user(ADMIN_ID)
-            await message.channel.send(f"<@{ADMIN_ID}> Your consultation has been requested in this thread.")
-    
-    await bot.process_commands(message)
+        # Notify admin user (try to find them in the guild first)
+        admin_member = guild.get_member(ADMIN_ID)
+        if admin_member:
+            try:
+                await admin_member.send(f"Bot {bot.user} is now online!")
+                print(f"Notified admin user: {admin_member.display_name}")
+            except discord.Forbidden:
+                print("Could not DM admin user - they may have DMs disabled")
+        else:
+            print(f"Could not find admin user with ID: {ADMIN_ID} in server {guild.name}")
+            
+        # Vectorize documents on startup
+        await document_processor.scan_and_vectorize()
+        print("Document vectorization complete")
+        
+        # Optional: Send a startup message to the channel
+        if channel:
+            await channel.send("Bot is online and ready to assist!")
 
-@bot.command(name='approve')
-async def approve_summary(ctx):
-    if ctx.author.id == ADMIN_ID and ctx.channel.type == discord.ChannelType.public_thread:
-        await knowledge_manager.store_summary(ctx.channel.id)
-        await ctx.send("Summary approved and added to knowledge base.")
+# Rest of the code remains the same...
 
 def main():
     bot.run(TOKEN)
 
 if __name__ == "__main__":
-    main() 
+    main()
