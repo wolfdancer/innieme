@@ -2,9 +2,9 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from .document_processor import DocumentProcessor
-from .conversation_engine import ConversationEngine
-from .knowledge_manager import KnowledgeManager
+from innieme_bot.document_processor import DocumentProcessor
+from innieme_bot.conversation_engine import ConversationEngine
+from innieme_bot.knowledge_manager import KnowledgeManager
 
 # Load environment variables
 load_dotenv()
@@ -84,4 +84,4 @@ def main():
     bot.run(TOKEN)
 
 if __name__ == "__main__":
-    main()
+    main() 

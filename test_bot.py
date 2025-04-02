@@ -10,8 +10,7 @@ os.environ['GUILD_ID'] = '987654321'
 os.environ['CHANNEL_ID'] = '456789123'
 os.environ['OPENAI_API_KEY'] = 'test_openai_key'
 
-# Now import the bot
-from innieme_bot.innieme_bot import bot, document_processor, knowledge_manager, conversation_engine
+from run_bot import bot, document_processor, knowledge_manager, conversation_engine
 
 def test_bot_initialization():
     """Test that the bot and its components are initialized correctly"""
