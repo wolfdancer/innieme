@@ -7,7 +7,8 @@ from innieme_bot.conversation_engine import ConversationEngine
 from innieme_bot.knowledge_manager import KnowledgeManager
 
 # Load environment variables
-load_dotenv()
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+load_dotenv(env_path)
 TOKEN = os.getenv('DISCORD_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_USER_ID'))
 DOCS_DIR = os.getenv('DOCUMENTS_DIRECTORY')
@@ -35,6 +36,17 @@ conversation_engine = ConversationEngine(document_processor, knowledge_manager, 
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
+    # Notify admin user
+    admin_user = bot.get_user(ADMIN_ID)
+    if admin_user:
+        await admin_user.send(f"Bot {bot.user} is now online!")
+    else:
+        print("Could not find admin user to notify")
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel:
+        print(f"Joined channel: {channel.name}")
+    else:
+        print("Could not find specified channel")
     # Vectorize documents on startup
     await document_processor.scan_and_vectorize()
     print("Document vectorization complete")
