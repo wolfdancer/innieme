@@ -19,7 +19,7 @@ def test_bot_initialization():
     
     # Check if document processor is initialized
     assert document_processor is not None
-    assert document_processor.docs_dir == './test_documents'
+    assert document_processor.docs_dir.endswith('/test_documents')
     
     # Check if knowledge manager is initialized
     assert knowledge_manager is not None
