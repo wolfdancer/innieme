@@ -7,11 +7,12 @@ from innieme_bot.conversation_engine import ConversationEngine
 from innieme_bot.knowledge_manager import KnowledgeManager
 
 # Load environment variables
-env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+current_dir = os.path.dirname(os.path.abspath(__file__))
+env_path = os.path.join(current_dir, '.env')
 load_dotenv(env_path)
 TOKEN = os.getenv('DISCORD_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_USER_ID'))
-DOCS_DIR = os.getenv('DOCUMENTS_DIRECTORY')
+DOCS_DIR = os.path.join(current_dir, os.getenv('DOCUMENTS_DIRECTORY'))
 GUILD_ID = int(os.getenv('GUILD_ID'))
 CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
 
@@ -20,14 +21,14 @@ intents = discord.Intents.all()  # Use all intents for maximum compatibility
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Initialize components
-document_processor = DocumentProcessor(DOCS_DIR, embedding_type="fake")
-''' for OpenAI embeddings
+# document_processor = DocumentProcessor(DOCS_DIR, embedding_type="fake")
+# ''' for OpenAI embeddings
 document_processor = DocumentProcessor(
     DOCS_DIR, 
     embedding_type="openai",
     embedding_config={"api_key": os.getenv("OPENAI_API_KEY")}
 )
-'''
+
 knowledge_manager = KnowledgeManager()
 conversation_engine = ConversationEngine(document_processor, knowledge_manager, ADMIN_ID)
 
