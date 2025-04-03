@@ -22,7 +22,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Initialize components
 # document_processor = DocumentProcessor(DOCS_DIR, embedding_type="fake")
-# ''' for OpenAI embeddings
+# for OpenAI embeddings
 document_processor = DocumentProcessor(
     DOCS_DIR, 
     embedding_type="openai",
@@ -31,6 +31,31 @@ document_processor = DocumentProcessor(
 
 knowledge_manager = KnowledgeManager()
 conversation_engine = ConversationEngine(document_processor, knowledge_manager, ADMIN_ID)
+
+async def is_following_thread(thread):
+    """Check if this is a thread we should be following"""
+    # First check the cache
+    if conversation_engine.is_following_thread(thread):
+        return True
+    
+    try:
+        # If not in cache, check the first message
+        first_message = await thread.fetch_message(thread.id)
+        is_bot_thread = bot.user.mentioned_in(first_message)
+        return is_bot_thread
+    except discord.NotFound:
+        return False
+
+async def get_thread_context(thread, limit=10):
+    """Get recent messages from the thread for context"""
+    messages = []
+    async for message in thread.history(limit=limit):
+        messages.append({
+            "role": "assistant" if message.author == bot.user else "user",
+            "content": message.content,
+            "timestamp": message.created_at.isoformat()
+        })
+    return list(reversed(messages))  # Return in chronological order
 
 @bot.event
 async def on_ready():
@@ -77,7 +102,7 @@ async def on_ready():
         
         # Optional: Send a startup message to the channel
         if channel:
-            await channel.send("Bot is online and ready to assist!")
+            await channel.send("Online and ready to assist!")
 
 @bot.event
 async def on_message(message):
@@ -85,19 +110,30 @@ async def on_message(message):
     if message.author == bot.user:
         return
     
-    # Check if bot is mentioned
+    # Check if message is in a thread
+    if message.channel.type == discord.ChannelType.public_thread:
+        # Check if this is a thread we should be following
+        if await is_following_thread(message.channel):
+            # Get recent context from the thread
+            context_messages = await get_thread_context(message.channel)
+            # Process the query with context and respond
+            response = await conversation_engine.process_query(
+                message.content, 
+                message.channel.id,
+                context_messages=context_messages
+            )
+            await message.channel.send(response)
+            return
+    
+    # Check if bot is mentioned (for starting new threads)
     if bot.user.mentioned_in(message):
-        # If message is in a thread, use that thread
-        # Otherwise create a new thread
-        if message.channel.type == discord.ChannelType.public_thread:
-            thread = message.channel
-        else:
-            thread = await message.create_thread(name=f"Chat with {message.author.display_name}")
-        
+        # Create a new thread
+        thread = await message.create_thread(name=f"Chat with {message.author.display_name}")        
         # Process the query and respond
         query = message.content.replace(f'<@{bot.user.id}>', '').strip()
-        response = await conversation_engine.process_query(query, message.author.id, thread.id)
+        response = await conversation_engine.process_query(query, thread.id)
         await thread.send(response)
+        return
     
     # Check for admin commands
     elif message.author.id == ADMIN_ID and "summary and file" in message.content.lower():
