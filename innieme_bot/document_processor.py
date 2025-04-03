@@ -59,7 +59,7 @@ class DocumentProcessor:
         print(f"Found {len(files)} documents to process")
         # Process each file based on its type
         for file_path in files:
-            print(f"Processing {file_path}")
+            print(f"- {file_path}")
             text = await self._extract_text(file_path)
             if text:
                 document_texts.append({"text": text, "source": file_path})

@@ -67,7 +67,7 @@ class ConversationEngine:
                 "role": msg["role"],
                 "content": msg["content"]
             })
-            
+        print(f"Messages: {messages}")
         try:
             # Call OpenAI API
             response = await client.chat.completions.create(
