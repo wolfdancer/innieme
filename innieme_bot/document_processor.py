@@ -1,6 +1,7 @@
 import os
 import glob
 import asyncio
+from typing import List
 import pypdf
 import docx
 import numpy as np
@@ -144,7 +145,7 @@ class DocumentProcessor:
             text = file.read()
         return text
     
-    async def search_documents(self, query, top_k=5):
+    async def search_documents(self, query, top_k=5) -> List:
         """Search the vectorstore for relevant document chunks"""
         if not self.vectorstore:
             return []

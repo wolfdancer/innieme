@@ -160,8 +160,8 @@ class DiscordBot:
             return
         await channel.send(f"Bot {self.bot.user} is connected, preparing documents...")
         scanning_result = await self.document_processor.scan_and_vectorize()
-        mention = f"(fyi <@{self.admin_id}>)" if self.admin_id else f"(no admin user {self.admin_id})"
-        await channel.send(f"{scanning_result} (fyi {mention})")
+        mention = f"(fyi <@{self.admin_id}>)" if admin_member else f"(no admin user {self.admin_id})"
+        await channel.send(f"{scanning_result} {mention}")
     
     async def on_message(self, message):
         """Event handler for when a message is received"""
@@ -174,7 +174,7 @@ class DiscordBot:
             # Check if this is a thread we should be following
             starter_message = await message.channel.parent.fetch_message(message.channel.id)
             print(f"Starter message: [{starter_message.author}]: '{starter_message.content[:50]}...'")
-            if await self._should_follow_thread(message.channel, self.bot.user):
+            if self.bot.user.mentioned_in(message) or await self._should_follow_thread(message.channel, self.bot.user):
                 # Get recent context from the thread
                 await self.process_and_respond(
                     message.channel,
