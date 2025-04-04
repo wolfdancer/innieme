@@ -78,8 +78,7 @@ class ConversationEngine:
                 "content": msg["content"]
             })
             print(f"{msg['role']}: {msg['content']}")
-        print("------------------------------")
-
+        response = ""
         try:
             # Call OpenAI API
             response = await client.chat.completions.create(
@@ -89,11 +88,15 @@ class ConversationEngine:
                 max_tokens=1000
             )
             
-            return response.choices[0].message.content or "I got an empty response. Please try again."
+            response = response.choices[0].message.content or "I got an empty response. Please try again."
             
         except Exception as e:
             print(f"Error calling OpenAI API: {str(e)}")
-            return "I apologize, but I encountered an error processing your request. Please try again later."
+            response = "I apologize, but I encountered an error processing your request. Please try again later."
+        print("--------- Response -----------")
+        print(response)
+        print("------------------------------")
+        return response
 
     def is_following_thread(self, thread):
         """Check if this is a thread we should be following"""

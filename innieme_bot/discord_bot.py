@@ -9,10 +9,10 @@ import importlib
 import sys
 from datetime import datetime
 class DiscordBot:
-    def __init__(self, token, admin_id, guild_id, channel_id, docs_dir):
+    def __init__(self, token, outie_id, guild_id, channel_id, docs_dir):
         """Initialize the Discord bot with the necessary components"""
         self.token = token
-        self.admin_id = admin_id
+        self.outie_id = outie_id
         self.guild_id = guild_id
         self.channel_id = channel_id
         self.docs_dir = docs_dir
@@ -35,7 +35,7 @@ class DiscordBot:
         self.conversation_engine = ConversationEngine(
             self.document_processor, 
             self.knowledge_manager, 
-            self.admin_id
+            self.outie_id
         )
         
         # Store original modules for reloading
@@ -55,10 +55,16 @@ class DiscordBot:
         @self.bot.command(name='approve')
         async def approve(ctx):
             await self.approve_summary(ctx)
+                    
+        @self.bot.command(name='quit')
+        async def quit(ctx):
+            if ctx.author.id != self.outie_id:
+                await ctx.send("This command is only available to the outie.")
+                return
             
-        @self.bot.command(name='reload')
-        async def reload(ctx):
-            await self.reload_modules(ctx)
+            await ctx.send("Goodbye! Bot shutting down...")
+            await self.bot.close()
+        
 
     async def _should_follow_thread(self, thread, user):
         """Check if this is a thread we should be following"""
@@ -151,16 +157,16 @@ class DiscordBot:
         if not isinstance(channel, discord.TextChannel):
             print(f"Channel with ID: {self.channel_id} is not a text channel.")
             channel = None
-        admin_member = guild.get_member(self.admin_id)
+        outie_member = guild.get_member(self.outie_id)
         if not channel:
-            if admin_member:
-                await admin_member.send(f"Bot {self.bot.user} is now online but could not find text channel with ID: {self.channel_id}")
+            if outie_member:
+                await outie_member.send(f"Bot {self.bot.user} is now online but could not find text channel with ID: {self.channel_id}")
             else:
-                print(f"Could not find channel with ID: {self.channel_id} in server {guild.name} or admin user {self.admin_id}.")
+                print(f"Could not find channel with ID: {self.channel_id} in server {guild.name} or outie user {self.outie_id}.")
             return
         await channel.send(f"Bot {self.bot.user} is connected, preparing documents...")
         scanning_result = await self.document_processor.scan_and_vectorize()
-        mention = f"(fyi <@{self.admin_id}>)" if admin_member else f"(no admin user {self.admin_id})"
+        mention = f"(fyi <@{self.outie_id}>)" if outie_member else f"(no outie user {self.outie_id})"
         await channel.send(f"{scanning_result} {mention}")
     
     async def on_message(self, message):
@@ -197,8 +203,8 @@ class DiscordBot:
             )
             return
         
-        # Check for admin commands
-        elif message.author.id == self.admin_id and "summary and file" in message.content.lower():
+        # Check for outie commands
+        elif message.author.id == self.outie_id and "summary and file" in message.content.lower():
             # This command should be used in a thread
             if message.channel.type == discord.ChannelType.public_thread:
                 summary = await self.knowledge_manager.generate_summary(message.channel.id)
@@ -207,54 +213,16 @@ class DiscordBot:
         # Check for consultation requests
         elif "please consult outie" in message.content.lower():
             if message.channel.type == discord.ChannelType.public_thread:
-                admin_user = self.bot.get_user(self.admin_id)
-                await message.channel.send(f"<@{self.admin_id}> Your consultation has been requested in this thread.")
+                outie_user = self.bot.get_user(self.outie_id)
+                await message.channel.send(f"<@{self.outie_id}> Your consultation has been requested in this thread.")
         
         await self.bot.process_commands(message)
     
     async def approve_summary(self, ctx):
         """Command to approve a summary and add it to the knowledge base"""
-        if ctx.author.id == self.admin_id and ctx.channel.type == discord.ChannelType.public_thread:
+        if ctx.author.id == self.outie_id and ctx.channel.type == discord.ChannelType.public_thread:
             await self.knowledge_manager.store_summary(ctx.channel.id)
             await ctx.send("Summary approved and added to knowledge base.")
-    
-    async def reload_modules(self, ctx):
-        """Reload bot modules without restarting the bot (admin only)"""
-        if ctx.author.id != self.admin_id:
-            await ctx.send("This command is only available to the admin.")
-            return
-        
-        try:
-            # Store original modules if not already stored
-            if not self.original_modules:
-                for module_name in sys.modules:
-                    if module_name.startswith('innieme_bot'):
-                        self.original_modules[module_name] = sys.modules[module_name]
-            
-            # Reload the modules
-            for module_name in self.original_modules:
-                if module_name in sys.modules:
-                    print(f"Reloading module: {module_name}")
-                    importlib.reload(sys.modules[module_name])
-            
-            # Update the conversation engine with the new modules
-            self.document_processor = DocumentProcessor(
-                self.docs_dir, 
-                embedding_type="openai",
-                embedding_config={"api_key": os.getenv("OPENAI_API_KEY")}
-            )
-            
-            self.knowledge_manager = KnowledgeManager()
-            self.conversation_engine = ConversationEngine(
-                self.document_processor, 
-                self.knowledge_manager, 
-                self.admin_id
-            )
-            await ctx.send("✅ Bot modules reloaded successfully!")
-            print("Bot modules reloaded successfully")
-        except Exception as e:
-            await ctx.send(f"❌ Error reloading modules: {str(e)}")
-            print(f"Error reloading modules: {str(e)}")
     
     def run(self):
         """Run the bot"""
