@@ -59,8 +59,8 @@ class DiscordBot:
         @self.bot.command(name='reload')
         async def reload(ctx):
             await self.reload_modules(ctx)
-    
-    async def should_follow_thread(self, thread):
+
+    async def _should_follow_thread(self, thread, user):
         """Check if this is a thread we should be following"""
         print(f"Checking thread with name: {thread.name}")
         # First check the cache
@@ -74,9 +74,9 @@ class DiscordBot:
             print(f"Starter message: [{starter_message.author}]: '{starter_message.content[:50]}...'")
             
             # Check multiple conditions
-            is_mentioned = self.bot.user.mentioned_in(starter_message)
-            has_mention_string = f'<@{self.bot.user.id}>' in starter_message.content
-            is_bot_name_in_message = self.bot.user.name.lower() in starter_message.content.lower()
+            is_mentioned = user.mentioned_in(starter_message)
+            has_mention_string = f'<@{user.id}>' in starter_message.content
+            is_bot_name_in_message = user.name.lower() in starter_message.content.lower()
             
             print(f"Mentioned: {is_mentioned}, Mention string: {has_mention_string}, " 
                 f"Name in message: {is_bot_name_in_message}")
@@ -89,7 +89,7 @@ class DiscordBot:
         except (discord.NotFound, AttributeError) as e:
             print(f"Error checking starter message: {str(e)}")
             # Fallback: Check if the thread name contains the bot's name
-            return self.bot.user.name.lower() in thread.name.lower()
+            return user.name.lower() in thread.name.lower()
     
     async def get_thread_context(self, thread, limit=10):
         """Get recent messages from the thread for context"""
@@ -148,22 +148,25 @@ class DiscordBot:
             return
         # Get channel within the guild
         channel = guild.get_channel(self.channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            print(f"Channel with ID: {self.channel_id} is not a text channel.")
+            channel = None
         admin_member = guild.get_member(self.admin_id)
         if not channel:
             if admin_member:
-                await admin_member.send(f"Bot {self.bot.user} is now online but could not find channel with ID: {self.channel_id}")
+                await admin_member.send(f"Bot {self.bot.user} is now online but could not find text channel with ID: {self.channel_id}")
             else:
                 print(f"Could not find channel with ID: {self.channel_id} in server {guild.name} or admin user {self.admin_id}.")
             return
         await channel.send(f"Bot {self.bot.user} is connected, preparing documents...")
-        await self.document_processor.scan_and_vectorize()
+        scanning_result = await self.document_processor.scan_and_vectorize()
         mention = f"(fyi <@{self.admin_id}>)" if self.admin_id else f"(no admin user {self.admin_id})"
-        await channel.send(f"Bot {self.bot.user} is online and ready to assist! {mention}")
+        await channel.send(f"{scanning_result} (fyi {mention})")
     
     async def on_message(self, message):
         """Event handler for when a message is received"""
         # Ignore messages from the bot itself
-        if message.author == self.bot.user:
+        if not self.bot.user or message.author == self.bot.user:
             return
         
         # Check if message is in a thread
@@ -171,7 +174,7 @@ class DiscordBot:
             # Check if this is a thread we should be following
             starter_message = await message.channel.parent.fetch_message(message.channel.id)
             print(f"Starter message: [{starter_message.author}]: '{starter_message.content[:50]}...'")
-            if await self.should_follow_thread(message.channel):
+            if await self._should_follow_thread(message.channel, self.bot.user):
                 # Get recent context from the thread
                 await self.process_and_respond(
                     message.channel,
