@@ -94,13 +94,15 @@ class DocumentProcessor:
         # Create vector store
         texts = [chunk["text"] for chunk in all_chunks]
         
+        response = ""
         if not texts:
             self.vectorstore = self._create_empty_store()
+            response = "no documents found to process"
         else:
             metadatas = [{"source": chunk["source"]} for chunk in all_chunks]
             self.vectorstore = FAISS.from_texts(texts, self.embeddings, metadatas=metadatas)
-        
-        return f"{len(all_chunks)} chunks created from {count} out of {len(files)} references"
+            response = f"{len(all_chunks)} chunks created from {count} out of {len(files)} references"
+        return response
     
     async def _extract_text(self, file_path):
         """Extract text from a document file based on its extension"""
