@@ -8,7 +8,7 @@ os.environ['OPENAI_API_KEY'] = 'test_openai_key'
 
 bot = DiscordBot(
     token='test_token',
-    admin_id=123456789,
+    outie_id=123456789,
     guild_id=987654321,
     channel_id=456789123,
     docs_dir='./test_documents'
