@@ -37,7 +37,7 @@ async def test_extract_from_txt(document_processor, sample_txt_file):
 async def test_scan_and_vectorize_empty_dir(document_processor):
     """Test scanning an empty directory"""
     result = await document_processor.scan_and_vectorize()
-    assert result is True
+    assert result == "no documents found to process"
     assert document_processor.vectorstore is not None
 
 @pytest.mark.asyncio
@@ -55,4 +55,4 @@ async def test_search_documents_with_data(document_processor, sample_txt_file):
     # Then search
     results = await document_processor.search_documents("test document")
     assert len(results) > 0
-    assert "test document" in results[0].page_content.lower() 
+    assert "test document" in results[0].page_content.lower()

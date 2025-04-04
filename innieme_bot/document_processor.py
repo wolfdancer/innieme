@@ -5,9 +5,13 @@ import pypdf
 import docx
 import numpy as np
 from langchain_community.vectorstores import FAISS
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.vectorstores.faiss import FAISS as LangchainFAISS
 from langchain_community.embeddings import FakeEmbeddings  # Simple in-memory embedding
 from langchain_core.embeddings import Embeddings  # Base class for embeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import faiss
+
 
 class DocumentProcessor:
     def __init__(self, docs_dir, embedding_type="fake", embedding_config=None):
@@ -40,13 +44,25 @@ class DocumentProcessor:
             # Only import if needed
             from langchain_openai import OpenAIEmbeddings
             api_key = self.embedding_config.get("api_key", os.getenv("OPENAI_API_KEY"))
-            return OpenAIEmbeddings(openai_api_key=api_key)
+            return OpenAIEmbeddings(api_key=api_key)
         elif self.embedding_type == "fake":
             # Simple embedding for testing
             return FakeEmbeddings(size=1536)  # OpenAI compatible dimension
         else:
             raise ValueError(f"Unsupported embedding type: {self.embedding_type}")
-        
+
+    def _create_empty_store(self):
+        """Handle the case where no texts are found to vectorize by creating an empty FAISS index"""
+        dimension = 1536  # Same as OpenAI embeddings dimension
+        # Create empty FAISS instance
+        return LangchainFAISS(
+            embedding_function=self.embeddings,
+            index=faiss.IndexFlatL2(dimension),
+            docstore=InMemoryDocstore({}),
+            index_to_docstore_id={}
+        )
+    
+
     async def scan_and_vectorize(self):
         """Scan all documents in the specified directory and create vector embeddings"""
         document_texts = []
@@ -78,26 +94,15 @@ class DocumentProcessor:
         # Create vector store
         texts = [chunk["text"] for chunk in all_chunks]
         
+        response = ""
         if not texts:
-            # Handle empty directory case by creating an empty FAISS index
-            print("No texts found to vectorize, creating empty index")
-            import faiss
-            dimension = 1536  # Same as OpenAI embeddings dimension
-            index = faiss.IndexFlatL2(dimension)
-            
-            # Create empty FAISS instance
-            from langchain_community.vectorstores.faiss import FAISS as LangchainFAISS
-            self.vectorstore = LangchainFAISS(
-                embedding_function=self.embeddings,
-                index=index,
-                docstore={},
-                index_to_docstore_id={}
-            )
+            self.vectorstore = self._create_empty_store()
+            response = "no documents found to process"
         else:
             metadatas = [{"source": chunk["source"]} for chunk in all_chunks]
             self.vectorstore = FAISS.from_texts(texts, self.embeddings, metadatas=metadatas)
-        
-        return True
+            response = f"{len(all_chunks)} chunks created from {count} out of {len(files)} references"
+        return response
     
     async def _extract_text(self, file_path):
         """Extract text from a document file based on its extension"""
