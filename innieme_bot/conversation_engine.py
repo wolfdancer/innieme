@@ -1,16 +1,28 @@
 import asyncio
 import uuid
 from datetime import datetime
+from .document_processor import DocumentProcessor
+from .knowledge_manager import KnowledgeManager
 
 class ConversationEngine:
-    def __init__(self, document_processor, knowledge_manager, admin_id):
+    def __init__(self, document_processor:DocumentProcessor, knowledge_manager:KnowledgeManager, admin_id:str):
         self.document_processor = document_processor
         self.knowledge_manager = knowledge_manager
         self.admin_id = admin_id
         self.active_threads = set()
     
-    async def process_query(self, query, thread_id, context_messages=None):
-        """Process a user query and generate a response"""
+    async def process_query(self, query:str, thread_id:int, context_messages:list[dict[str,str]]) -> str:
+        """Process a user query and generate a response
+        
+        Args:
+            query: The user's query text
+            thread_id: Discord thread ID
+            context_messages: List of previous messages in the conversation
+            
+        Raises:
+            AssertionError: If context_messages is None
+        """
+        assert context_messages is not None, "context_messages cannot be None"
         self.active_threads.add(thread_id)
         # Check for special commands
         if "outie please" == query.lower():
@@ -22,17 +34,8 @@ class ConversationEngine:
         # Generate context from relevant documents
         context = "\n\n".join([doc.page_content for doc in relevant_docs])
         
-        # Use provided context messages or create a new one with just the current query
-        messages_to_use = context_messages or [{
-            "role": "user",
-            "content": query,
-            "timestamp": datetime.now().isoformat()
-        }]
-        
         # Generate response based on context and conversation history
-        response = await self._generate_response(context, messages_to_use)
-        
-        return response
+        return await self._generate_response(context, context_messages)        
     
     async def _generate_response(self, context, history):
         """Generate a response using the context and conversation history via OpenAI API"""
@@ -52,7 +55,8 @@ class ConversationEngine:
             "easy to understand, and provide official references whenever possible."
             "When you need additional information, please ask at most three times before providing your best educated answer."
         )
-        
+        print("--------- Sent to LLM ---------")
+        print(f"System message: {system_msg}")
         if context:
             system_msg += (
                 f"\n\nHere is some relevant information to help answer "
@@ -60,20 +64,23 @@ class ConversationEngine:
             )
             
         messages.append({"role": "system", "content": system_msg})
-        
+        print("...(matched context)...")
+
         # Add conversation history
         for msg in history:
             messages.append({
                 "role": msg["role"],
                 "content": msg["content"]
             })
-        print(f"Messages: {messages}")
+            print(f"{msg['role']}: {msg['content']}")
+        print("------------------------------")
+
         try:
             # Call OpenAI API
             response = await client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
-                temperature=0.7,
+                temperature=0.1,
                 max_tokens=1000
             )
             

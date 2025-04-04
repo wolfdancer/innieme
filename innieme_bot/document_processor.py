@@ -56,16 +56,19 @@ class DocumentProcessor:
         for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
             files.extend(glob.glob(os.path.join(self.docs_dir, '**', ext), recursive=True))
         
-        print(f"Found {len(files)} documents to process")
+        print(f"Found {len(files)} documents to process...")
         # Process each file based on its type
+        count = 0
         for file_path in files:
             print(f"- {file_path}")
             text = await self._extract_text(file_path)
             if text:
                 document_texts.append({"text": text, "source": file_path})
+                count += 1
             else:
                 print(f"Text extraction failed for {file_path}")
-        
+        print(f"Done. Extracted text from {count} documents")
+
         # Split texts into chunks
         all_chunks = []
         for doc in document_texts:
