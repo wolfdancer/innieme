@@ -3,6 +3,9 @@ import uuid
 from datetime import datetime
 from .document_processor import DocumentProcessor
 from .knowledge_manager import KnowledgeManager
+from openai import AsyncOpenAI
+import os
+        
 
 class ConversationEngine:
     def __init__(self, document_processor:DocumentProcessor, knowledge_manager:KnowledgeManager, admin_id:str):
@@ -31,18 +34,20 @@ class ConversationEngine:
         # Search for relevant document chunks
         relevant_docs = await self.document_processor.search_documents(query)
         
+        # Generate response based on relevant docs and conversation history
+        return await self._generate_response(relevant_docs, context_messages)
+
+    async def _generate_response(self, relevant_docs, history) -> str:
+        """Generate a response using the relevant documents and conversation history via OpenAI API
+        
+        Args:
+            relevant_docs: List of relevant document chunks from document processor
+            history: List of previous conversation messages
+        """
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
         # Generate context from relevant documents
         context = "\n\n".join([doc.page_content for doc in relevant_docs])
-        
-        # Generate response based on context and conversation history
-        return await self._generate_response(context, context_messages)        
-    
-    async def _generate_response(self, context, history):
-        """Generate a response using the context and conversation history via OpenAI API"""
-        from openai import AsyncOpenAI
-        import os
-        
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
         # Format conversation history into OpenAI messages format
         messages = []
@@ -64,7 +69,7 @@ class ConversationEngine:
             )
             
         messages.append({"role": "system", "content": system_msg})
-        print("...(matched context)...")
+        print(f"...(matched {len(relevant_docs)} as context)...")
 
         # Add conversation history
         for msg in history:
@@ -84,7 +89,7 @@ class ConversationEngine:
                 max_tokens=1000
             )
             
-            return response.choices[0].message.content
+            return response.choices[0].message.content or "I got an empty response. Please try again."
             
         except Exception as e:
             print(f"Error calling OpenAI API: {str(e)}")
