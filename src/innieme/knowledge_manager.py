@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 
 class KnowledgeManager:
-    def __init__(self, summaries_path="./summaries"):
+    def __init__(self, summaries_path="./data/summaries"):
         self.summaries_path = summaries_path
         self.pending_summaries = {}  # Maps thread_id to generated summary
         

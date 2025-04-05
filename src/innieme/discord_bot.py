@@ -59,7 +59,13 @@ class DiscordBot:
         @self.bot.command(name='quit')
         async def quit(ctx):
             if ctx.author.id != self.outie_id:
-                await ctx.send("This command is only available to the outie.")
+                outie_name = getattr(ctx.guild.get_member(self.outie_id), 'display_name', 'unknown')
+                await ctx.send(f"This command is only available to the outie ({outie_name}).")
+                return
+            
+            if ctx.channel.id != self.channel_id:
+                channel_name = getattr(ctx.guild.get_channel(self.channel_id), 'name', 'unknown')
+                await ctx.send(f"This command can only be used in the bot's primary channel (#{channel_name}).")
                 return
             
             await ctx.send("Goodbye! Bot shutting down...")

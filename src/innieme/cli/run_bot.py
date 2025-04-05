@@ -1,14 +1,14 @@
 import os
 from dotenv import load_dotenv
-from innieme_bot.discord_bot import DiscordBot
+from innieme.discord_bot import DiscordBot
 
 # Load environment variables
-current_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(current_dir, '.env')
+current_dir = os.getcwd()
+env_path = env_path = os.path.join(current_dir, '.env')
 load_dotenv(env_path)
 TOKEN = os.getenv('DISCORD_TOKEN')
 OUTIE_ID = int(os.getenv('OUTIE_USER_ID', 0))
-DOCS_DIR = os.path.join(current_dir, os.getenv('DOCUMENTS_DIRECTORY', 'documents'))
+DOCS_DIR = os.path.join(current_dir, os.getenv('DOCUMENTS_DIRECTORY', 'data/documents'))
 GUILD_ID = int(os.getenv('GUILD_ID', 0))
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', 0))
 

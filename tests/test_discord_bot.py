@@ -2,7 +2,7 @@ import pytest
 import os
 import sys
 
-from innieme_bot.discord_bot import DiscordBot
+from innieme.discord_bot import DiscordBot
 
 os.environ['OPENAI_API_KEY'] = 'test_openai_key'
 
@@ -11,7 +11,7 @@ bot = DiscordBot(
     outie_id=123456789,
     guild_id=987654321,
     channel_id=456789123,
-    docs_dir='./test_documents'
+    docs_dir='./data/test_documents'
 )
 
 def test_bot_initialization():
@@ -33,4 +33,4 @@ def test_bot_initialization():
 def test_bot_intents():
     """Test that the bot has the required intents"""
     assert bot.intents.message_content is True
-    assert bot.intents.members is True 
+    assert bot.intents.members is True
