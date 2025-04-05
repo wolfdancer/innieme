@@ -1,21 +1,19 @@
 import os
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
+from .discord_bot_config import DiscordBotConfig
 from .document_processor import DocumentProcessor
 from .conversation_engine import ConversationEngine
 from .knowledge_manager import KnowledgeManager
-import importlib
-import sys
-from datetime import datetime
+
 class DiscordBot:
-    def __init__(self, token, outie_id, guild_id, channel_id, docs_dir):
+    def __init__(self, config: DiscordBotConfig):
         """Initialize the Discord bot with the necessary components"""
-        self.token = token
-        self.outie_id = outie_id
-        self.guild_id = guild_id
-        self.channel_id = channel_id
-        self.docs_dir = docs_dir
+        self.token = config.discord_token
+        self.outie_id = config.outie_id
+        self.guild_id = config.guild_id
+        self.channel_id = config.channel_id
+        self.docs_dir = config.docs_dir
         
         # Bot setup with required intents
         self.intents = discord.Intents.default()

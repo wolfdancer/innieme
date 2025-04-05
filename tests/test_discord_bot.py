@@ -2,17 +2,20 @@ import pytest
 import os
 import sys
 
+from innieme.discord_bot_config import DiscordBotConfig
 from innieme.discord_bot import DiscordBot
 
 os.environ['OPENAI_API_KEY'] = 'test_openai_key'
 
-bot = DiscordBot(
-    token='test_token',
+config = DiscordBotConfig(
+    discord_token='test_token',
     outie_id=123456789,
     guild_id=987654321,
     channel_id=456789123,
-    docs_dir='./data/test_documents'
+    docs_dir='./data/documents'
 )
+
+bot = DiscordBot(config=config)
 
 def test_bot_initialization():
     """Test that the bot and its components are initialized correctly"""
@@ -21,7 +24,7 @@ def test_bot_initialization():
     
     # Check if document processor is initialized
     assert bot.document_processor is not None
-    assert bot.document_processor.docs_dir.endswith('/test_documents')
+    assert bot.document_processor.docs_dir.endswith('/documents')
     
     # Check if knowledge manager is initialized
     assert bot.knowledge_manager is not None

@@ -8,7 +8,7 @@ import os
         
 
 class ConversationEngine:
-    def __init__(self, document_processor:DocumentProcessor, knowledge_manager:KnowledgeManager, admin_id:str):
+    def __init__(self, document_processor:DocumentProcessor, knowledge_manager:KnowledgeManager, admin_id:int):
         self.document_processor = document_processor
         self.knowledge_manager = knowledge_manager
         self.admin_id = admin_id
