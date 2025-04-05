@@ -1,6 +1,4 @@
-import os
 import pytest
-import asyncio
 from innieme.document_processor import DocumentProcessor
 
 # Test data directory
@@ -21,7 +19,7 @@ def sample_txt_file(test_docs_dir):
     return file_path
 
 @pytest.fixture
-def document_processor(test_docs_dir):
+def document_processor(test_docs_dir) -> DocumentProcessor:
     """Create a DocumentProcessor instance for testing"""
     return DocumentProcessor(str(test_docs_dir))
 
@@ -36,8 +34,8 @@ async def test_extract_from_txt(document_processor, sample_txt_file):
 @pytest.mark.asyncio
 async def test_scan_and_vectorize_empty_dir(document_processor):
     """Test scanning an empty directory"""
-    result = await document_processor.scan_and_vectorize()
-    assert result == "no documents found to process"
+    result = await document_processor.scan_and_vectorize(topic_name="test_topic")
+    assert result == "On topic 'test_topic': no documents found to process"
     assert document_processor.vectorstore is not None
 
 @pytest.mark.asyncio
@@ -50,7 +48,7 @@ async def test_search_documents_empty_vectorstore(document_processor):
 async def test_search_documents_with_data(document_processor, sample_txt_file):
     """Test searching after processing documents"""
     # First scan and vectorize
-    await document_processor.scan_and_vectorize()
+    await document_processor.scan_and_vectorize(topic_name="test_topic")
     
     # Then search
     results = await document_processor.search_documents("test document")

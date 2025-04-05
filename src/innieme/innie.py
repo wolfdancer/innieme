@@ -32,7 +32,7 @@ class Topic:
         return await self.conversation_engine.process_query(query, thread_id, context_messages)
     
     async def scan_and_vectorize(self) -> str:
-        return await self.document_processor.scan_and_vectorize()
+        return await self.document_processor.scan_and_vectorize(self.config.name)
     
     async def generate_summary(self, thread_id) -> str:
         return await self.knowledge_manager.generate_summary(thread_id)

@@ -56,7 +56,7 @@ class DiscordBot:
             if ctx.author.id != topic_outie:
                 outie_name = getattr(ctx.guild.get_member(topic_outie), 'display_name', 'unknown')
                 await ctx.send(f"This command is only available to the outie ({outie_name}).")
-                return            
+                return
             await ctx.send("Goodbye! Bot shutting down...")
             await self.bot.close()
         
@@ -151,38 +151,42 @@ class DiscordBot:
         for guild in self.bot.guilds:
             print(f"- {guild.name} (ID: {guild.id})")
         
-        if not self.channels:
-            print("No channels configured for this bot.")
-            return
-        innie = self.innies[0]
-        outie_id = innie.outie_config.outie_id
-        topic = innie.topics[0]
-        channel = topic.config.channels[0]
-        guild_id = channel.guild_id
-        channel_id = channel.channel_id
-        # Connect to specific guild/server
-        guild = self.bot.get_guild(guild_id)
-        if not guild:
-            print(f"Could not connect to server with ID: {guild_id}")
-            print("Please make sure the bot has been invited to this server.")
-            print("Invite URL: https://discord.com/api/oauth2/authorize?client_id=1356846600692957315&permissions=377957210176&scope=bot")
-            return
-        # Get channel within the guild
-        channel = guild.get_channel(channel_id)
-        if not isinstance(channel, discord.TextChannel):
-            print(f"Channel with ID: {channel_id} is not a text channel.")
-            channel = None
-        outie_member = guild.get_member(outie_id)
-        if not channel:
-            if outie_member:
-                await outie_member.send(f"Bot {self.bot.user} is now online but could not find text channel with ID: {channel_id}")
+        for innie in self.innies:
+            for topic in innie.topics:
+                await self.connect_and_prepare(topic)
+    
+    async def connect_and_prepare(self, topic):
+        outie_id = topic.outie_config.outie_id
+        channels = []
+        for channel in topic.config.channels:
+            channel = topic.config.channels[0]
+            guild_id = channel.guild_id
+            channel_id = channel.channel_id
+            # Connect to specific guild/server
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                print(f"Could not connect to server with ID: {guild_id}")
+                print("Please make sure the bot has been invited to this server.")
+                print("Invite URL: https://discord.com/api/oauth2/authorize?client_id=1356846600692957315&permissions=377957210176&scope=bot")
+                return
+            # Get channel within the guild
+            channel = guild.get_channel(channel_id)
+            if not isinstance(channel, discord.TextChannel):
+                print(f"Channel with ID: {channel_id} is not a text channel.")
+                channel = None
+            outie_member = guild.get_member(outie_id)
+            if not channel:
+                if outie_member:
+                    await outie_member.send(f"Bot {self.bot.user} is now online but could not find text channel with ID: {channel_id}")
+                else:
+                    print(f"Could not find channel with ID: {channel_id} in server {guild.name} or outie user {outie_id}.")
             else:
-                print(f"Could not find channel with ID: {channel_id} in server {guild.name} or outie user {outie_id}.")
-            return
-        await channel.send(f"Bot {self.bot.user} is connected, preparing documents...")
+                channels.append((channel, outie_member))
+                await channel.send(f"Bot {self.bot.user} is connected, preparing documents for {topic.config.name}...")
         scanning_result = await topic.scan_and_vectorize()
-        mention = f"(fyi <@{outie_id}>)" if outie_member else f"(no outie user {outie_id})"
-        await channel.send(f"{scanning_result} {mention}")
+        for channel, outie_member in channels:
+            mention = f"(fyi <@{outie_id}>)" if outie_member else f"(no outie user {outie_id})"
+            await channel.send(f"{scanning_result} {mention}")
     
     async def on_message(self, message):
         """Event handler for when a message is received"""
