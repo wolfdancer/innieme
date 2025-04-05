@@ -155,7 +155,7 @@ class DiscordBot:
             for topic in innie.topics:
                 await self.connect_and_prepare(topic)
     
-    async def connect_and_prepare(self, topic):
+    async def connect_and_prepare(self, topic: Topic):
         outie_id = topic.outie_config.outie_id
         channels = []
         for channel in topic.config.channels:
