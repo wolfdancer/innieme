@@ -73,7 +73,7 @@ class DocumentProcessor:
         for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
             files.extend(glob.glob(os.path.join(self.docs_dir, '**', ext), recursive=True))
         
-        print(f"Found {len(files)} documents to process...")
+        print(f"Found {len(files)} documents to process under {self.docs_dir}...")
         # Process each file based on its type
         count = 0
         for file_path in files:
