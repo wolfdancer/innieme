@@ -10,10 +10,13 @@ class DiscordBot:
     def __init__(self, config: DiscordBotConfig):
         """Initialize the Discord bot with the necessary components"""
         self.token = config.discord_token
-        self.outie_id = config.outie_id
-        self.guild_id = config.guild_id
-        self.channel_id = config.channel_id
-        self.docs_dir = config.docs_dir
+        first_outtie = config.outies[0]
+        self.outie_id = first_outtie.outie_id
+        first_topic = first_outtie.topics[0]
+        self.docs_dir = first_topic.docs_dir
+        first_channel = first_topic.channels[0]
+        self.guild_id = first_channel.guild_id
+        self.channel_id = first_channel.channel_id
         
         # Bot setup with required intents
         self.intents = discord.Intents.default()
