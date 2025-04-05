@@ -64,7 +64,7 @@ class DocumentProcessor:
         )
     
 
-    async def scan_and_vectorize(self):
+    async def scan_and_vectorize(self, topic_name:str) -> str:
         """Scan all documents in the specified directory and create vector embeddings"""
         document_texts = []
         
@@ -73,7 +73,7 @@ class DocumentProcessor:
         for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
             files.extend(glob.glob(os.path.join(self.docs_dir, '**', ext), recursive=True))
         
-        print(f"Found {len(files)} documents to process under {self.docs_dir}...")
+        print(f"For {topic_name}: Found {len(files)} documents to process under {self.docs_dir}...")
         # Process each file based on its type
         count = 0
         for file_path in files:
@@ -98,11 +98,11 @@ class DocumentProcessor:
         response = ""
         if not texts:
             self.vectorstore = self._create_empty_store()
-            response = "no documents found to process"
+            response = f"On topic '{topic_name}': no documents found to process"
         else:
             metadatas = [{"source": chunk["source"]} for chunk in all_chunks]
             self.vectorstore = FAISS.from_texts(texts, self.embeddings, metadatas=metadatas)
-            response = f"{len(all_chunks)} chunks created from {count} out of {len(files)} references"
+            response = f"On topic '{topic_name}': {len(all_chunks)} chunks created from {count} out of {len(files)} references"
         return response
     
     async def _extract_text(self, file_path):
