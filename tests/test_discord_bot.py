@@ -2,7 +2,7 @@ import pytest
 import os
 import sys
 
-from innieme.discord_bot_config import DiscordBotConfig
+from innieme.discord_bot_config import DiscordBotConfig, OutieConfig, TopicConfig, ChannelConfig
 from innieme.discord_bot import DiscordBot
 
 os.environ['OPENAI_API_KEY'] = 'test_openai_key'
@@ -13,10 +13,13 @@ os.makedirs(test_docs_dir, exist_ok=True)
 
 config = DiscordBotConfig(
     discord_token='test_token',
-    outie_id=123456789,
-    guild_id=987654321,
-    channel_id=456789123,
-    docs_dir=test_docs_dir
+    openai_api_key='test_openai_key',
+    outies=[OutieConfig(outie_id=123456789, topics=[TopicConfig(
+        name='test_topic',
+        role='test_role',
+        docs_dir=test_docs_dir,
+        channels=[ChannelConfig(guild_id=123456789, channel_id=987654321)]
+    )])]
 )
 
 bot = DiscordBot(config=config)
