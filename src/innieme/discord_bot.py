@@ -159,7 +159,6 @@ class DiscordBot:
         outie_id = topic.outie_config.outie_id
         channels = []
         for channel in topic.config.channels:
-            channel = topic.config.channels[0]
             guild_id = channel.guild_id
             channel_id = channel.channel_id
             # Connect to specific guild/server
