@@ -1,9 +1,7 @@
-import pytest
-import os
-import sys
-
 from innieme.discord_bot_config import DiscordBotConfig, OutieConfig, TopicConfig, ChannelConfig
 from innieme.discord_bot import DiscordBot
+
+import os
 
 os.environ['OPENAI_API_KEY'] = 'test_openai_key'
 
@@ -11,18 +9,29 @@ os.environ['OPENAI_API_KEY'] = 'test_openai_key'
 test_docs_dir = 'data/test-documents'
 os.makedirs(test_docs_dir, exist_ok=True)
 
-config = DiscordBotConfig(
-    discord_token='test_token',
-    openai_api_key='test_openai_key',
-    outies=[OutieConfig(outie_id=123456789, topics=[TopicConfig(
-        name='test_topic',
-        role='test_role',
-        docs_dir=test_docs_dir,
-        channels=[ChannelConfig(guild_id=123456789, channel_id=987654321)]
-    )])]
+bot_config = DiscordBotConfig(
+    discord_token="test_token",
+    openai_api_key="test_key",
+    outies=[]
 )
+outie_config = OutieConfig(
+    outie_id=123,
+    topics=[],
+    bot=bot_config
+)
+bot_config.outies.append(outie_config)
+topic_config = TopicConfig(
+    name="test_topic",
+    role="test_role",
+    docs_dir=test_docs_dir,
+    channels=[],
+    outie=outie_config
+)
+outie_config.topics.append(topic_config)
+channel_config = ChannelConfig(guild_id=123456789, channel_id=987654321, topic=topic_config)
+topic_config.channels.append(channel_config)
 
-bot = DiscordBot(config=config)
+bot = DiscordBot(config=bot_config)
 
 def test_bot_initialization():
     """Test that the bot and its components are initialized correctly"""
@@ -30,17 +39,10 @@ def test_bot_initialization():
     assert bot.bot.command_prefix == '!'
     
     # Check if document processor is initialized
-    assert bot.document_processor is not None
-    assert bot.document_processor.docs_dir.endswith(test_docs_dir)
-    
-    # Check if knowledge manager is initialized
-    assert bot.knowledge_manager is not None
-    
-    # Check if conversation engine is initialized
-    assert bot.conversation_engine is not None
-    assert bot.conversation_engine.admin_id == 123456789
+    assert bot._identify_topic(987654321) is not None
+
 
 def test_bot_intents():
     """Test that the bot has the required intents"""
-    assert bot.intents.message_content is True
-    assert bot.intents.members is True
+    assert bot.bot.intents.message_content is True
+    assert bot.bot.intents.members is True
