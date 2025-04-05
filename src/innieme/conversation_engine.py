@@ -1,14 +1,15 @@
-import asyncio
-import uuid
 from datetime import datetime
 from .document_processor import DocumentProcessor
 from .knowledge_manager import KnowledgeManager
+from .discord_bot_config import TopicConfig
 from openai import AsyncOpenAI
 import os
         
 
 class ConversationEngine:
-    def __init__(self, document_processor:DocumentProcessor, knowledge_manager:KnowledgeManager, admin_id:int):
+    def __init__(self, api_key:str, topic:TopicConfig, document_processor:DocumentProcessor, knowledge_manager:KnowledgeManager, admin_id:int):
+        self.api_key = api_key
+        self.topic = topic
         self.document_processor = document_processor
         self.knowledge_manager = knowledge_manager
         self.admin_id = admin_id
@@ -44,30 +45,21 @@ class ConversationEngine:
             relevant_docs: List of relevant document chunks from document processor
             history: List of previous conversation messages
         """
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        
-        # Generate context from relevant documents
-        context = "\n\n".join([doc.page_content for doc in relevant_docs])
+        client = AsyncOpenAI(api_key=self.api_key)
         
         # Format conversation history into OpenAI messages format
         messages = []
         
         # Add system message with context
-        system_msg = (
-            "You are an experienced Assistant Scoutmaster for Scouting America, "
-            "formerly known as BSA. You work as a caring coach with the scouts "
-            "who are asking questions and need quick answers. Please make your answer clear, short and "
-            "easy to understand, and provide official references whenever possible."
-            "When you need additional information, please ask at most three times before providing your best educated answer."
-        )
+        system_msg = self.topic.role
         print("--------- Sent to LLM ---------")
         print(f"System message: {system_msg}")
-        if context:
-            system_msg += (
-                f"\n\nHere is some relevant information to help answer "
-                f"the query:\n\n{context}"
-            )
-            
+        # Generate context from relevant documents
+        context = "\n\n".join([doc.page_content for doc in relevant_docs])        
+        system_msg += (
+            f"\n\nHere is some relevant information to help answer the query:"
+            f"\n\n{context}"
+        )            
         messages.append({"role": "system", "content": system_msg})
         print(f"...(matched {len(relevant_docs)} as context)...")
 
@@ -98,7 +90,7 @@ class ConversationEngine:
         print("------------------------------")
         return response
 
-    def is_following_thread(self, thread):
+    def is_following_thread(self, thread) -> bool:
         """Check if this is a thread we should be following"""
         return thread.id in self.active_threads
 
