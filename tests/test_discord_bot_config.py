@@ -7,7 +7,7 @@ import os
 def test_valid_outie_id():
     """Test that a positive outie_id is accepted"""
     # Create a bot config first
-    bot = DiscordBotConfig(discord_token="test_token", openai_api_key="key", outies=[])  # Add minimal bot config
+    bot = DiscordBotConfig(discord_token="test_token", openai_api_key="key", embedding_model="huggingface", outies=[])  # Add minimal bot config
     outie = OutieConfig(outie_id=1, topics=[], bot=bot)  # Add bot reference
     assert outie.outie_id == 1
 
@@ -35,6 +35,7 @@ def test_config_from_yaml():
     yaml_content = f"""
     discord_token: "test_discord_token"
     openai_api_key: "test_openai_key"
+    embedding_model: "openai"
     outies:
       - outie_id: 1
         topics:

@@ -17,6 +17,7 @@ discord_token: discord_bot_token
 # 5. Copy your API key (you won't be able to see it again!)
 # 6. Paste your key below (keep it secret!)
 openai_api_key: openai_api_key
+embedding_model: "openai" # Options: "openai", "huggingface"
 outies:
 # To get your Discord admin user ID:
 # 1. Go to Discord and go to User Settings (gear icon)
