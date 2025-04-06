@@ -50,12 +50,20 @@ class OutieConfig(BaseModel):
 class DiscordBotConfig(BaseModel):
     discord_token: str
     openai_api_key: str
+    embedding_model: str
     outies: List[OutieConfig]
     
     @field_validator('discord_token')
     def token_must_not_be_empty(cls, v):
         if not v:
             raise ValueError('Discord token cannot be empty')
+        return v
+    
+    @field_validator('embedding_model')
+    def model_must_be_supported(cls, v):
+        supported_models = ['openai', 'huggingface', 'fake']
+        if v not in supported_models:
+            raise ValueError(f'Unsupported embedding model: {v}')
         return v
     
     @model_validator(mode='after')

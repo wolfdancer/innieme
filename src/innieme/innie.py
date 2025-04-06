@@ -13,8 +13,7 @@ class Topic:
         # Initialize components
         self.document_processor = DocumentProcessor(
             config.docs_dir, 
-            embedding_type="openai",
-            embedding_config={"api_key": api_key}
+            embedding_config={"type":outie_config.bot.embedding_model, "api_key": outie_config.bot.openai_api_key}
         )
         self.knowledge_manager = KnowledgeManager()
         self.conversation_engine = ConversationEngine(

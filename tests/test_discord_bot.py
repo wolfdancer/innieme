@@ -12,6 +12,7 @@ os.makedirs(test_docs_dir, exist_ok=True)
 bot_config = DiscordBotConfig(
     discord_token="test_token",
     openai_api_key="test_key",
+    embedding_model="fake",
     outies=[]
 )
 outie_config = OutieConfig(
