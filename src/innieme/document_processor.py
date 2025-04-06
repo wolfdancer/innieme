@@ -12,9 +12,9 @@ import faiss
 
 
 class DocumentProcessor:
-    def __init__(self, docs_dir, embedding_config={}):
+    def __init__(self, docs_dir, embedding_config=None):
         self.docs_dir = docs_dir
-        self.embedding_config = embedding_config
+        self.embedding_config = embedding_config or {}
         self.embeddings = self._get_embeddings()
         self.vectorstore = None
         self.text_splitter = RecursiveCharacterTextSplitter(
