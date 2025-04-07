@@ -24,6 +24,15 @@ def test_invalid_outie_id(invalid_id, expected_message):
     
     assert expected_message in str(exc_info.value)
 
+def test_invalid_discord_token():
+    with pytest.raises(ValueError) as exc_info:
+        DiscordBotConfig(
+            openai_api_key="test_openai_key",
+            embedding_model="huggingface",
+            outies=[OutieConfig(outie_id=1, topics=[])]
+        )
+    assert "discord_token" in str(exc_info.value)
+
 def test_config_from_yaml():
     math_docs_dir = 'data/math'
     scouting_docs_dir = 'data/scouting'
