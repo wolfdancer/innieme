@@ -1,8 +1,3 @@
-import os
-import glob
-from typing import List
-import pypdf
-import docx
 from langchain_community.vectorstores import FAISS
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores.faiss import FAISS as LangchainFAISS
@@ -10,9 +5,19 @@ from langchain_community.embeddings import FakeEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import faiss
 
+import pypdf
+import docx
+import glob
+
+from typing import List, Dict
+
+import logging
+import os
+
+logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
-    def __init__(self, docs_dir, embedding_config=None):
+    def __init__(self, docs_dir, embedding_config:Dict[str, str]=None):
         self.docs_dir = docs_dir
         self.embedding_config = embedding_config or {}
         self.embeddings = self._get_embeddings()
@@ -27,7 +32,7 @@ class DocumentProcessor:
         if embedding_type == "openai":
             # Only import if needed
             from langchain_openai import OpenAIEmbeddings
-            api_key = self.embedding_config["api_key"]
+            api_key = self.embedding_config.get("api_key")
             return OpenAIEmbeddings(api_key=api_key)
         elif embedding_type == "huggingface":
             # Only import if needed
@@ -63,18 +68,18 @@ class DocumentProcessor:
         for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
             files.extend(glob.glob(os.path.join(self.docs_dir, '**', ext), recursive=True))
         
-        print(f"For {topic_name}: Found {len(files)} documents to process under {self.docs_dir}...")
+        logger.info(f"For {topic_name}: Found {len(files)} documents to process under {self.docs_dir}...")
         # Process each file based on its type
         count = 0
         for file_path in files:
-            print(f"  - {file_path}")
+            logger.info(f"  - {file_path}")
             text = await self._extract_text(file_path)
             if text:
                 document_texts.append({"text": text, "source": file_path})
                 count += 1
             else:
-                print(f"    Text extraction failed for {file_path}")
-        print(f"Done. Extracted text from {count} documents")
+                logger.error(f"    Text extraction failed for {file_path}")
+        logger.info(f"Done. Extracted text from {count} documents")
 
         # Split texts into chunks
         all_chunks = []
@@ -107,10 +112,10 @@ class DocumentProcessor:
             elif ext.lower() == '.txt' or ext.lower() == '.md':
                 return await self._extract_from_txt(file_path)
             else:
-                print(f"Unsupported file format: {file_path}")
+                logger.warning(f"Unsupported file format: {file_path}")
                 return None
         except Exception as e:
-            print(f"Error extracting text from {file_path}: {str(e)}")
+            logger.error(f"Error extracting text from {file_path}: {str(e)}")
             return None
     
     async def _extract_from_pdf(self, file_path):

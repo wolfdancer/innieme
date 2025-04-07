@@ -1,12 +1,17 @@
 from .discord_bot_config import DiscordBotConfig
 from .innie import Innie, Topic
 
-import discord
+from discord import Message, Intents, ChannelType, NotFound, File, TextChannel
 from discord.ext import commands
+
+import logging
 
 from collections import defaultdict
 from typing import Optional, List
 import io
+
+
+logger = logging.getLogger(__name__)
 
 class DiscordBot:    
     def __init__(self, config: DiscordBotConfig):
@@ -27,9 +32,9 @@ class DiscordBot:
         self._register_events()
         self._register_commands()
 
-    def _create_intents(self) -> discord.Intents:
+    def _create_intents(self) -> Intents:
         """Set up Discord intents"""
-        intents = discord.Intents.default()
+        intents = Intents.default()
         intents.message_content = True
         intents.members = True
         intents.guilds = True
@@ -65,31 +70,31 @@ class DiscordBot:
         return topics[0] if topics else None
 
     def _identify_topic_by_message(self, message) -> Optional[Topic]:
-        channel_id = message.channel.parent.id if message.channel.type == discord.ChannelType.public_thread else message.channel.id
+        channel_id = message.channel.parent.id if message.channel.type == ChannelType.public_thread else message.channel.id
         return self._identify_topic(channel_id)
 
     async def _should_follow_thread(self, thread, user):
-        print(f"Checking if thread {thread.id} should be followed")
+        logger.debug(f"Checking if thread {thread.id} should be followed")
         try:
             # Get the starter message that created the thread
             starter_message = await thread.parent.fetch_message(thread.id)
-            print(f"Starter message: [{starter_message.author}]: '{starter_message.content[:50]}...'")
+            logger.debug(f"Starter message: [{starter_message.author}]: '{starter_message.content[:50]}...'")
             
             # Check multiple conditions
             is_mentioned = user.mentioned_in(starter_message)
             has_mention_string = f'<@{user.id}>' in starter_message.content
             is_bot_name_in_message = user.name.lower() in starter_message.content.lower()
             
-            print(f"Mentioned: {is_mentioned}, Mention string: {has_mention_string}, " 
+            logger.info(f"Mentioned: {is_mentioned}, Mention string: {has_mention_string}, " 
                 f"Name in message: {is_bot_name_in_message}")
             
             # Follow thread if any condition is true
             should_follow = is_mentioned or has_mention_string or is_bot_name_in_message
-            print(f"Thread {thread.id} {'should' if should_follow else 'should not'} be followed")
+            logger.debug(f"Thread {thread.id} {'should' if should_follow else 'should not'} be followed")
             return should_follow
 
-        except (discord.NotFound, AttributeError) as e:
-            print(f"Error checking starter message: {str(e)}")
+        except (NotFound, AttributeError) as e:
+            logger.info(f"Error checking starter message: {str(e)}")
             # Fallback: Check if the thread name contains the bot's name
             return user.name.lower() in thread.name.lower()
     
@@ -110,8 +115,8 @@ class DiscordBot:
                     "role": "user",
                     "content": starter_message.content
                 })
-            except (discord.NotFound, AttributeError) as e:
-                print(f"Could not fetch parent message: {str(e)}")
+            except (NotFound, AttributeError) as e:
+                logger.error(f"Could not fetch parent message: {str(e)}")
         
         return list(reversed(messages))  # Return in chronological order
     
@@ -124,14 +129,10 @@ class DiscordBot:
         # Add typing indicator while processing
         async with channel.typing():
             try:
-                response = await topic.process_query(
-                    query, 
-                    thread_id,
-                    context_messages=context_messages
-                )
+                response = await topic.process_query(thread_id, query, context_messages=context_messages)
                 if len(response) > 2000:
                     # Create a file object with the response
-                    file = discord.File(io.BytesIO(response.encode()), filename="response.txt")
+                    file = File(io.BytesIO(response.encode()), filename="response.txt")
                     await channel.send("Response is too long, sending as a file:", file=file)
                 else:
                     # Send as normal message if under limit
@@ -144,12 +145,12 @@ class DiscordBot:
     
     async def on_ready(self):
         """Event handler for when the bot is ready"""
-        print(f'{self.bot.user} has connected to Discord!')
+        logger.info(f'{self.bot.user} has connected to Discord!')
         
         # Print all available guilds
-        print(f"Available guilds:")
+        logger.debug(f"Available guilds:")
         for guild in self.bot.guilds:
-            print(f"- {guild.name} (ID: {guild.id})")
+            logger.debug(f"- {guild.name} (ID: {guild.id})")
         
         for innie in self.innies:
             for topic in innie.topics:
@@ -164,21 +165,21 @@ class DiscordBot:
             # Connect to specific guild/server
             guild = self.bot.get_guild(guild_id)
             if not guild:
-                print(f"Could not connect to server with ID: {guild_id}")
-                print("Please make sure the bot has been invited to this server.")
-                print("Invite URL: https://discord.com/api/oauth2/authorize?client_id=1356846600692957315&permissions=377957210176&scope=bot")
+                logger.error(f"Could not connect to server with ID: {guild_id}")
+                logger.error("Please make sure the bot has been invited to this server.")
+                logger.error("Invite URL: https://discord.com/api/oauth2/authorize?client_id=1356846600692957315&permissions=377957210176&scope=bot")
                 return
             # Get channel within the guild
             channel = guild.get_channel(channel_id)
-            if not isinstance(channel, discord.TextChannel):
-                print(f"Channel with ID: {channel_id} is not a text channel.")
+            if not isinstance(channel, TextChannel):
+                logger.error(f"Channel with ID: {channel_id} is not a text channel.")
                 channel = None
             outie_member = guild.get_member(outie_id)
             if not channel:
                 if outie_member:
                     await outie_member.send(f"Bot {self.bot.user} is now online but could not find text channel with ID: {channel_id}")
                 else:
-                    print(f"Could not find channel with ID: {channel_id} in server {guild.name} or outie user {outie_id}.")
+                    logger.error(f"Could not find channel with ID: {channel_id} in server {guild.name} or outie user {outie_id}.")
             else:
                 channels.append((channel, outie_member))
                 await channel.send(f"Bot {self.bot.user} is connected, preparing documents for {topic.config.name}...")
@@ -187,7 +188,7 @@ class DiscordBot:
             mention = f"(fyi <@{outie_id}>)" if outie_member else f"(no outie user {outie_id})"
             await channel.send(f"{scanning_result} {mention}")
     
-    async def on_message(self, message):
+    async def on_message(self, message:Message):
         """Event handler for when a message is received"""
         # Ignore messages from the bot itself
         if not self.bot.user or message.author == self.bot.user:
@@ -196,16 +197,16 @@ class DiscordBot:
         topic = self._identify_topic_by_message(message)
         if not topic:
             return
-        print(f"On message, located topic: {topic.config.name}")
+        logger.info(f"On message, located topic: {topic.config.name}")
         outie_id = topic.outie_config.outie_id
 
         # Check if message is in a thread
-        if message.channel.type == discord.ChannelType.public_thread:
+        message_channel = message.channel
+        if message_channel.type == ChannelType.public_thread:
             # Check if this is a thread we should be following
-            starter_message = await message.channel.parent.fetch_message(message.channel.id)
             if (
                 self.bot.user.mentioned_in(message) 
-                or topic.is_following_thread(message.channel) 
+                or topic.is_following_thread(message.channel.id) 
                 or await self._should_follow_thread(message.channel, self.bot.user)
             ):
                 # Get recent context from the thread
@@ -218,7 +219,7 @@ class DiscordBot:
                 )
                 return
             else:
-                print(f"Not responding to thread")
+                logger.debug(f"Not responding to thread")
                         
         # Check if bot is mentioned (for starting new threads)
         if self.bot.user.mentioned_in(message):
@@ -237,13 +238,13 @@ class DiscordBot:
         # Check for outie commands
         elif message.author.id == outie_id and "summary and file" in message.content.lower():
             # This command should be used in a thread
-            if message.channel.type == discord.ChannelType.public_thread:
+            if message.channel.type == ChannelType.public_thread:
                 summary = await topic.generate_summary(message.channel.id)
                 await message.channel.send(f"Summary generated:\n\n{summary}\n\nApprove to add to knowledge base? (yes/no)")
         
         # Check for consultation requests
         elif "please consult outie" in message.content.lower():
-            if message.channel.type == discord.ChannelType.public_thread:
+            if message.channel.type == ChannelType.public_thread:
                 outie_user = self.bot.get_user(outie_id)
                 await message.channel.send(f"<@{outie_id}> Your consultation has been requested in this thread.")
         
@@ -254,7 +255,7 @@ class DiscordBot:
         if not topic:
             return
         outie_id = topic.outie_config.outie_id
-        if ctx.author.id == outie_id and ctx.channel.type == discord.ChannelType.public_thread:
+        if ctx.author.id == outie_id and ctx.channel.type == ChannelType.public_thread:
             await topic.store_summary(ctx.channel.id)
             await ctx.send("Summary approved and added to knowledge base.")
     

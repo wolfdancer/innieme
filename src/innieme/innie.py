@@ -16,19 +16,20 @@ class Topic:
             embedding_config={"type":outie_config.bot.embedding_model, "api_key": outie_config.bot.openai_api_key}
         )
         self.knowledge_manager = KnowledgeManager()
+        self.active_threads = set()
         self.conversation_engine = ConversationEngine(
             api_key,
             config,
             self.document_processor, 
-            self.knowledge_manager, 
-            outie_config.outie_id
+            self.knowledge_manager
         )
 
-    def is_following_thread(self, thread) -> bool:
-        return self.conversation_engine.is_following_thread(thread)
+    def is_following_thread(self, thread_id:int) -> bool:
+        return thread_id in self.active_threads
     
-    async def process_query(self, query:str, thread_id:int, context_messages:list[dict[str,str]]) -> str:
-        return await self.conversation_engine.process_query(query, thread_id, context_messages)
+    async def process_query(self, thread_id: int, query: str, context_messages: list[dict[str, str]]) -> str:
+        self.active_threads.add(thread_id)
+        return await self.conversation_engine.process_query(query, context_messages)
     
     async def scan_and_vectorize(self) -> str:
         return await self.document_processor.scan_and_vectorize(self.config.name)

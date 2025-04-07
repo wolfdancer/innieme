@@ -1,7 +1,10 @@
-import asyncio
 import json
-import os
+import logging
+
 from datetime import datetime
+import os
+
+logger = logging.getLogger(__name__)
 
 class KnowledgeManager:
     def __init__(self, summaries_path="./data/summaries"):
@@ -61,6 +64,6 @@ class KnowledgeManager:
                         summary_data = json.load(f)
                         summaries.append(summary_data)
                 except Exception as e:
-                    print(f"Error loading summary {filename}: {str(e)}")
+                    logger.error(f"Error loading summary {filename}: {str(e)}")
         
         return summaries
