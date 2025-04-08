@@ -119,7 +119,10 @@ class DiscordBot:
                 logger.error(f"Could not fetch parent message: {str(e)}")
         
         return list(reversed(messages))  # Return in chronological order
-    
+
+    async def respond(self, message:Message, response:str):
+        await message.channel.send(response)
+
     async def process_and_respond(self, topic, channel, query, thread_id, context_channel):
         """Process a query and respond in the channel"""
         context_messages = await self.get_thread_context(context_channel) if context_channel else [{
@@ -196,7 +199,10 @@ class DiscordBot:
         
         topic = self._identify_topic_by_message(message)
         if not topic:
+            if self.bot.user.mentioned_in(message):
+                await self.respond(message, "Sorry I am not set up to support a topic in this channel.")
             return
+
         logger.info(f"On message, located topic: {topic.config.name}")
         outie_id = topic.outie_config.outie_id
 
