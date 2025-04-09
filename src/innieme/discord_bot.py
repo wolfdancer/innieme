@@ -1,7 +1,7 @@
 from .discord_bot_config import DiscordBotConfig
 from .innie import Innie, Topic
 
-from discord import Message, Intents, ChannelType, NotFound, File, TextChannel
+from discord import Message, Intents, ChannelType, NotFound, File, TextChannel, Embed, Color
 from discord.ext import commands
 
 import logging
@@ -64,7 +64,34 @@ class DiscordBot:
                 return
             await ctx.send("Goodbye! Bot shutting down...")
             await self.bot.close()
-        
+
+        @self.bot.command(name='hello')
+        async def hello(ctx):
+            # Create an embed (this is Discord's rich text format)
+            embed = Embed(
+                title="InnieMe: Your Knowledge Speaks for Itself",
+                description="Democratizes access to AI-powered Q&A capabilities",
+                color=Color.blue(),
+                url="https://github.com/wolfdancer/innieme"  # Clickable link on the title
+            )
+            
+            # Add fields to the embed
+            embed.add_field(name="Pricing", value="Free during early access", inline=False)
+            embed.add_field(name="Key Feature", value="Ask and you shall receieve", inline=True)
+            embed.add_field(name="Deployment", value="Server/channel specific", inline=True)
+            
+            # Add a footer
+            embed.set_footer(text="InnieMe @ 2025")
+            
+            # Set a thumbnail image (small image in the corner)
+            embed.set_thumbnail(url="https://repository-images.githubusercontent.com/956066438/8dce1cee-0386-423d-817c-283e3dfb7288")
+            
+            # Set a large image
+            # embed.set_image(url="https://repository-images.githubusercontent.com/956066438/8dce1cee-0386-423d-817c-283e3dfb7288")
+            
+            # Send the embed
+            await ctx.send(embed=embed)
+
     def _identify_topic(self, channel_id) -> Optional[Topic]:
         topics = self.channels.get(channel_id, [])
         return topics[0] if topics else None
