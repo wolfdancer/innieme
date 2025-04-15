@@ -1,0 +1,25 @@
+# Discord Integration
+discord.py
+
+# Environment Configuration
+python-dotenv
+
+# Document Processing & LLM
+chromadb
+langchain>=0.1.0
+langchain-community
+langchain-chroma
+langchain_huggingface
+langchain-openai
+pypdf
+python-docx
+
+# Vector Database
+faiss-cpu
+
+# AI/ML Dependencies
+numpy
+openai>=1.0.0
+
+# Only install audioop-lts on Python 3.13+
+audioop-lts==0.2.1; python_version >= '3.13'

@@ -1,0 +1,11 @@
+-r requirements.in
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov  # For coverage reports
+
+# Code Quality
+black       # Code formatting
+flake8      # Linting
+isort       # Import sorting
