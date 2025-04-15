@@ -1,28 +1,26 @@
-# Discord API
-discord.py>=2.3.0
+# Discord Integration
+discord.py
 
-# Environment variables
-python-dotenv>=1.0.0
+# Environment Configuration
+python-dotenv
 
-# Document processing
-pypdf>=3.15.1
-python-docx>=0.8.11
-langchain>=0.0.267
-langchain-community>=0.0.10
-langchain-openai>=0.0.5
+# Document Processing & LLM
+chromadb
+langchain
+langchain-community
+langchain-chroma
+langchain_huggingface
+langchain-openai
+pypdf
+python-docx
 
-# Vector database
-faiss-cpu>=1.7.4
+# Vector Database
+faiss-cpu
 
-# OpenAI embeddings
-openai>=1.0.0
-
-# Async support
-asyncio>=3.4.3
+# AI/ML Dependencies
+numpy
+openai
 
 # Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-
-# Utilities
-numpy>=1.24.0
+pytest
+pytest-asyncio
