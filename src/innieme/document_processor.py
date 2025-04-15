@@ -1,65 +1,53 @@
-from langchain_community.vectorstores import FAISS
-from langchain_community.docstore.in_memory import InMemoryDocstore
-from langchain_community.vectorstores.faiss import FAISS as LangchainFAISS
-from langchain_community.embeddings import FakeEmbeddings
+from .embeddings_factory import EmbeddingsFactory
+from .vector_store_factory import VectorStoreFactory
+
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-import faiss
 
 import pypdf
 import docx
 import glob
+from pydantic import SecretStr
 
-from typing import List, Dict
+from typing import List, Dict, Optional, Union
+from langchain.embeddings.base import Embeddings
 
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
-    def __init__(self, docs_dir, embedding_config:Dict[str, str]=None):
+    def __init__(self, 
+                 topic: str, 
+                 docs_dir: str,
+                 embeddings_factory: EmbeddingsFactory,
+                 vector_store_factory: VectorStoreFactory):
         self.docs_dir = docs_dir
-        self.embedding_config = embedding_config or {}
-        self.embeddings = self._get_embeddings()
-        self.vectorstore = None
+        self.topic = topic
+        self.embeddings_factory = embeddings_factory
+        self.vector_store_factory = vector_store_factory
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200
         )
-    
-    def _get_embeddings(self):
-        embedding_type = self.embedding_config.get("type", "fake")
-        if embedding_type == "openai":
-            # Only import if needed
-            from langchain_openai import OpenAIEmbeddings
-            api_key = self.embedding_config.get("api_key")
-            return OpenAIEmbeddings(api_key=api_key)
-        elif embedding_type == "huggingface":
-            # Only import if needed
-            from langchain_huggingface import HuggingFaceEmbeddings
-            model_name = self.embedding_config.get("model_name", "all-MiniLM-L6-v2")
-            return HuggingFaceEmbeddings(
-                model_name=model_name,
-                cache_folder=os.path.join(self.docs_dir, ".cache", "langchain"),
-            )
-        elif embedding_type == "fake":
-            # Simple embedding for testing
-            return FakeEmbeddings(size=1536)  # OpenAI compatible dimension
-        else:
-            raise ValueError(f"Unsupported embedding type: {embedding_type}")
 
     def _create_empty_store(self):
-        """Handle the case where no texts are found to vectorize by creating an empty FAISS index"""
-        dimension = 1536  # Same as OpenAI embeddings dimension
-        # Create empty FAISS instance
-        return LangchainFAISS(
-            embedding_function=self.embeddings,
-            index=faiss.IndexFlatL2(dimension),
-            docstore=InMemoryDocstore({}),
-            index_to_docstore_id={}
+        """Handle the case where no texts are found to vectorize"""
+        collection_name = self._get_collection_name()
+        return self.vector_store_factory.create_empty_store(
+            collection_name=collection_name,
+            embeddings=self.embeddings_factory.create_embeddings()
         )
 
-    async def scan_and_vectorize(self, topic_name:str) -> str:
+    def _get_collection_name(self) -> str:
+        """Create a unique collection name using topic and timestamp"""
+        # Clean topic name to be filesystem safe
+        safe_topic = "".join(c if c.isalnum() else "_" for c in self.topic)
+        timestamp = int(time.time() * 1000)  # Milliseconds since epoch
+        return f"{safe_topic}_{timestamp}"
+
+    async def scan_and_vectorize(self) -> str:
         """Scan all documents in the specified directory and create vector embeddings"""
         document_texts = []
         
@@ -68,7 +56,7 @@ class DocumentProcessor:
         for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
             files.extend(glob.glob(os.path.join(self.docs_dir, '**', ext), recursive=True))
         
-        logger.info(f"For {topic_name}: Found {len(files)} documents to process under {self.docs_dir}...")
+        logger.info(f"For {self.topic}: Found {len(files)} documents to process under {self.docs_dir}...")
         # Process each file based on its type
         count = 0
         for file_path in files:
@@ -89,15 +77,22 @@ class DocumentProcessor:
         
         # Create vector store
         texts = [chunk["text"] for chunk in all_chunks]
+
+        collection_name = self._get_collection_name()
         
         response = ""
         if not texts:
             self.vectorstore = self._create_empty_store()
-            response = f"On topic '{topic_name}': no documents found to process"
+            response = f"On topic '{self.topic}': no documents found to process"
         else:
             metadatas = [{"source": chunk["source"]} for chunk in all_chunks]
-            self.vectorstore = FAISS.from_texts(texts, self.embeddings, metadatas=metadatas)
-            response = f"On topic '{topic_name}': {len(all_chunks)} chunks created from {count} out of {len(files)} references"
+            self.vectorstore = self.vector_store_factory.create_from_texts(
+                texts,
+                self.embeddings_factory.create_embeddings(),
+                collection_name=collection_name,
+                metadatas=metadatas
+            )
+            response = f"On topic '{self.topic}': {len(all_chunks)} chunks created from {count} out of {len(files)} references"
         return response
     
     async def _extract_text(self, file_path):

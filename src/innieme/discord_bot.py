@@ -230,7 +230,7 @@ class DiscordBot:
                 await self.respond(message, "Sorry I am not set up to support a topic in this channel.")
             return
 
-        logger.info(f"On message, located topic: {topic.config.name}")
+        logger.debug(f"On message, located topic: {topic.config.name}")
         outie_id = topic.outie_config.outie_id
 
         # Check if message is in a thread
