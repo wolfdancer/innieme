@@ -1,5 +1,6 @@
-# Discord Integration
+# Platform Integrations
 discord.py
+slack-bolt
 
 # Environment Configuration
 python-dotenv

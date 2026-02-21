@@ -19,6 +19,8 @@ dev = [
 
 [project.scripts]
 innieme_bot = "innieme.cli.run_bot:main"
+innieme_slack_bot = "innieme.cli.run_slack_bot:main"
+innieme = "innieme.cli.run_unified_bot:main"
 
 [tool.setuptools]
 py-modules = []
