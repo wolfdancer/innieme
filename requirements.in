@@ -6,7 +6,7 @@ python-dotenv
 
 # Document Processing & LLM
 chromadb
-langchain>=0.1.0
+langchain>=0.1.0,<1.0.0
 langchain-community
 langchain-chroma
 langchain_huggingface
