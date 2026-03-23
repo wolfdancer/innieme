@@ -20,6 +20,7 @@ faiss-cpu
 # AI/ML Dependencies
 numpy
 openai>=1.0.0
+pydantic-ai
 
 # Only install audioop-lts on Python 3.13+
 audioop-lts==0.2.1; python_version >= '3.13'
