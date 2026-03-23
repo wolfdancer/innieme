@@ -24,8 +24,6 @@ jobs:
         pip install flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-        # pydantic-ai/logfire requires newer opentelemetry than chromadb pins; upgrade all otel packages together
-        pip install "pydantic-ai>=1.0.0" "opentelemetry-api" "opentelemetry-sdk" "opentelemetry-exporter-otlp-proto-common" "opentelemetry-exporter-otlp-proto-grpc" "opentelemetry-exporter-otlp-proto-http" "opentelemetry-proto" "opentelemetry-semantic-conventions" "opentelemetry-instrumentation" -U
         # Install the package in development mode
         pip install -e .
     - name: Lint with flake8
