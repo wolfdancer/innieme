@@ -23,6 +23,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+        # pydantic-ai requires newer opentelemetry than chromadb pins; upgrade explicitly
+        pip install "pydantic-ai>=1.0.0" -U
         # Install the package in development mode
         pip install -e .
     - name: Lint with flake8
