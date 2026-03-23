@@ -27,7 +27,7 @@ attrs==25.3.0
     #   aiohttp
     #   jsonschema
     #   referencing
-audioop-lts==0.2.1
+audioop-lts==0.2.1 ; python_version >= "3.13"
     # via discord-py
 backoff==2.2.1
     # via posthog
