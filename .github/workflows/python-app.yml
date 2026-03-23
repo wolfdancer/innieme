@@ -25,7 +25,7 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
         # pydantic-ai requires newer opentelemetry than chromadb pins; upgrade explicitly
-        pip install "pydantic-ai>=1.0.0" -U
+        pip install "pydantic-ai>=1.0.0" "opentelemetry-exporter-otlp-proto-common" "opentelemetry-api" "opentelemetry-sdk" -U
         # Install the package in development mode
         pip install -e .
     - name: Lint with flake8
