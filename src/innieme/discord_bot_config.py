@@ -47,8 +47,10 @@ class OutieConfig(BaseModel):
 
 class DiscordBotConfig(BaseModel):
     discord_token: str
-    openai_api_key: str
+    embeddings_api_key: str
+    llm_api_key: str
     embedding_model: str
+    llm_model: str = "openai:gpt-3.5-turbo"
     outies: List[OutieConfig]
 
     @field_validator('discord_token')

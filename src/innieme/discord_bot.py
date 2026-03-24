@@ -20,7 +20,7 @@ class DiscordBot:
         self.bot = commands.Bot(command_prefix='!', intents=self._create_intents())
 
         # Innies setup        
-        self.innies = [Innie(config.openai_api_key, outie_config) for outie_config in config.outies]
+        self.innies = [Innie(outie_config) for outie_config in config.outies]
         # Channel->Topic mapping
         self.channels: defaultdict[int, List[Topic]] = defaultdict(list)
         for innie in self.innies:

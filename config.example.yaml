@@ -8,16 +8,22 @@
 # 6. Paste your token below (keep it secret!)
 discord_token: discord_bot_token
 
-# OpenAI API (for embeddings)
-# To get your OpenAI API key:
-# 1. Go to OpenAI's website (https://platform.openai.com)
-# 2. Sign in or create an account
-# 3. Click on your profile icon and select "View API keys"
-# 4. Click "Create new secret key"
-# 5. Copy your API key (you won't be able to see it again!)
-# 6. Paste your key below (keep it secret!)
-openai_api_key: openai_api_key
-embedding_model: "openai" # Options: "openai", "huggingface"
+# Embedding model to use for document vectorisation
+# Options: "openai", "huggingface", "fake"
+embedding_model: "openai"
+
+# API key for the embedding model (only required when embedding_model is "openai")
+embeddings_api_key: openai_api_key
+
+# LLM to use for conversation and summarisation
+# Format: "<provider>:<model>", e.g. "openai:gpt-4o", "anthropic:claude-sonnet-4-6"
+llm_model: "openai:gpt-3.5-turbo"
+
+# API key for the LLM provider
+# For OpenAI: https://platform.openai.com/api-keys
+# For Anthropic: https://console.anthropic.com/settings/keys
+llm_api_key: llm_api_key
+
 outies:
 # To get your Discord admin user ID:
 # 1. Go to Discord and go to User Settings (gear icon)
