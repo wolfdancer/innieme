@@ -136,11 +136,13 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-# Secret-bearing bot configs (keep *.example.yaml tracked). config.yaml is the
-# legacy Discord config name, still honored as a fallback.
-config.yaml
-discord_config.yaml
-slack_config.yaml
+# Secret-bearing bot configs at the repo root (keep *.example.yaml tracked).
+# config.yaml is the legacy Discord config name, still honored as a fallback.
+# Anchored with a leading slash so nested configs (e.g. openspec/config.yaml)
+# are NOT ignored.
+/config.yaml
+/discord_config.yaml
+/slack_config.yaml
 
 # Spyder project settings
 .spyderproject
@@ -184,3 +186,6 @@ data/
 
 # Codex PR review artifacts
 .codex-review/
+
+# Claude Code per-developer local settings (shared .claude/ tooling is tracked)
+.claude/settings.local.json
