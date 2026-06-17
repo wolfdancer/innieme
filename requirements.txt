@@ -543,6 +543,10 @@ six==1.17.0
     # via
     #   kubernetes
     #   python-dateutil
+slack-bolt==1.23.0
+    # via -r requirements.in
+slack-sdk==3.36.0
+    # via slack-bolt
 sniffio==1.3.1
     # via
     #   anthropic

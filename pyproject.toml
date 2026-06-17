@@ -9,6 +9,7 @@ description = "Your bot description"
 requires-python = ">=3.13"
 dependencies = [
     "discord.py",
+    "slack-bolt",
     "python-dotenv",
     "chromadb",
     "langchain>=0.1.0,<1.0.0",
@@ -37,6 +38,8 @@ dev = [
 
 [project.scripts]
 innieme_bot = "innieme.cli.run_bot:main"
+innieme_slack_bot = "innieme.cli.run_slack_bot:main"
+innieme = "innieme.cli.run_unified_bot:main"
 
 [tool.setuptools]
 py-modules = []

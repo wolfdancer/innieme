@@ -1,0 +1,60 @@
+# Slack Bot Configuration Example
+# Copy this to slack_config.yaml and fill in your actual values
+
+# Slack Bot Token (starts with xoxb-)
+# Get this from your Slack app's OAuth & Permissions page
+slack_bot_token: "xoxb-your-bot-token-here"
+
+# Slack App Token (starts with xapp-)
+# Get this from your Slack app's Basic Information page (App-Level Tokens section)
+# Required for Socket Mode
+slack_app_token: "xapp-your-app-token-here"
+
+# API key for the embedding model (required when embedding_model is "openai")
+embeddings_api_key: "your-embeddings-api-key"
+
+# Embedding model to use: openai, huggingface, or fake
+embedding_model: "openai"
+
+# LLM to use for conversation and summarisation
+# Format: "<provider>:<model>", e.g. "openai:gpt-4o", "anthropic:claude-sonnet-4-6"
+llm_model: "openai:gpt-3.5-turbo"
+
+# API key for the LLM provider
+llm_api_key: "your-llm-api-key"
+
+# Bot administrators and their topics
+outies:
+  - outie_id: "U1234567890"  # Slack User ID (starts with U)
+    topics:
+      - name: "math"
+        role: "You are a helpful math tutor. Answer math questions clearly and provide step-by-step explanations."
+        docs_dir: "./docs/math"  # Directory containing math documents
+        channels:
+          - channel_id: "C1234567890"  # Slack Channel ID (starts with C)
+      
+      - name: "science"
+        role: "You are a knowledgeable science teacher. Explain scientific concepts in an accessible way."
+        docs_dir: "./docs/science"
+        channels:
+          - channel_id: "C0987654321"
+
+  - outie_id: "U0987654321"  # Another administrator
+    topics:
+      - name: "support"
+        role: "You are a helpful customer support agent. Be friendly and solution-oriented."
+        docs_dir: "./docs/support"
+        channels:
+          - channel_id: "C5555555555"
+
+# To get Slack IDs:
+# - User IDs: Right-click on a user in Slack → Copy → Member ID
+# - Channel IDs: Right-click on a channel → Copy → Channel ID
+# 
+# To set up your Slack app:
+# 1. Go to https://api.slack.com/apps
+# 2. Create a new app "From scratch"
+# 3. Add Bot Token Scopes: app_mentions:read, channels:history, channels:read, chat:write, files:write, im:history, im:read, users:read
+# 4. Enable Socket Mode and create an App-Level Token with connections:write scope
+# 5. Install the app to your workspace
+# 6. Invite the bot to your channels: /invite @your-bot-name

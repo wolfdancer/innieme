@@ -4,124 +4,153 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-InnieMe is a Discord bot that provides AI-powered Q&A capabilities using document knowledge bases. The bot scans and vectorizes documents from specified directories, connects to Discord channels, and responds to user mentions with context-aware responses using configurable LLM providers via PydanticAI.
+InnieMe is a multi-platform Q&A bot (Discord and Slack) backed by document knowledge bases.
+It scans and vectorizes documents from configured directories and responds to user mentions
+with context-aware answers, using a configurable LLM provider (OpenAI, Anthropic, …) via
+[PydanticAI](https://ai.pydantic.dev/).
 
-## Common Development Commands
+Requires Python >= 3.13 (see `pyproject.toml`).
 
-### Installation and Setup
+## Development Commands
+
 ```bash
-# Install dependencies
+# Install (runtime + dev)
 pip install -e .
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r requirements-dev.txt
 
-# Create configuration from example
-cp config.example.yaml config.yaml
-# Edit config.yaml with your Discord token, API keys, LLM model, and channel settings
-```
+# Run a bot via the unified CLI (-c overrides the default config path)
+innieme discord                       # default: config.yaml
+innieme discord -c custom_config.yaml
+innieme slack                         # default: slack_config.yaml
 
-### Running the Bot
-```bash
-# Run the bot (main entry point)
-innieme_bot
+# Legacy / dedicated entry points
+innieme_bot          # Discord (== innieme.cli.run_bot:main)
+innieme_slack_bot    # Slack   (== innieme.cli.run_slack_bot:main)
 
-# Or run directly with Python
-python src/innieme/cli/run_bot.py
-```
+# Tests
+pytest                                         # all
+pytest tests/test_slack_bot.py                 # one file
+pytest tests/test_slack_bot.py::test_name      # one test
+pytest --cov=src/innieme                       # with coverage
 
-### Testing
-```bash
-# Run all tests
-pytest
-
-# Run tests with coverage
-pytest --cov=src/innieme
-
-# Run async tests specifically
-pytest -k "async" --asyncio-mode=strict
-```
-
-### Code Quality
-```bash
-# Format code
+# Code quality (CI runs flake8 against the whole repo — see below)
 black src/ tests/
-
-# Sort imports
 isort src/ tests/
-
-# Lint code
-flake8 src/ tests/
+flake8 . --select=E9,F63,F7,F82 --show-source --statistics            # hard-fail pass
+flake8 . --exit-zero --max-complexity=10 --max-line-length=127 --statistics   # advisory
 ```
 
-## Architecture Overview
+Dependency sources: `requirements.in` / `requirements-dev.in` are the pinned inputs;
+`requirements.txt` / `requirements-dev.txt` are the compiled lockfiles that CI installs.
 
-The application follows a modular architecture with clear separation of concerns:
+### Continuous Integration
+`.github/workflows/python-app.yml` runs on push/PR to `main`: installs `requirements.txt`
++ `requirements-dev.txt` + `pip install -e .`, runs the two flake8 passes above (only the
+first can fail the build), then `pytest`.
 
-### Core Components
+## Architecture
 
-1. **DiscordBot** (`src/innieme/discord_bot.py`): Main bot interface that handles Discord events, commands, and message routing
-2. **Innie** (`src/innieme/innie.py`): Container class that manages multiple topics and their configurations
-3. **Topic** (`src/innieme/innie.py`): Represents a single topic with its own document store, channels, and conversation engine
-4. **ConversationEngine** (`src/innieme/conversation_engine.py`): Handles query processing and response generation using a PydanticAI `Agent`
-5. **DocumentProcessor** (`src/innieme/document_processor.py`): Manages document scanning, vectorization, and similarity search
-6. **KnowledgeManager** (`src/innieme/knowledge_manager.py`): Handles conversation summarization (via a PydanticAI `Agent` with structured `SummaryOutput`) and knowledge base storage
+### Data flow
 
-### Factory Pattern Components
+1. On startup, each `Topic` runs `scan_and_vectorize()` — documents in `docs_dir` are chunked
+   (1000 chars, 200 overlap) and stored in an **in-memory** Chroma collection. A new collection
+   is created every startup; there is no persistence.
+2. On mention/message, the bot identifies the `Topic` for that channel, gets the `thread_id`,
+   and calls `Topic.process_query()`.
+3. `ConversationEngine` runs a similarity search (top-5 chunks) and invokes a PydanticAI `Agent`
+   whose system prompt is built from `ConversationDependencies` (topic `role` + matched doc
+   chunks + thread conversation history).
+4. The LLM is configurable via `llm_model` (default `openai:gpt-3.5-turbo`); the provider/model
+   string and `llm_api_key` are resolved in `conversation_engine._build_model()`.
 
-- **EmbeddingsFactory** (`src/innieme/embeddings_factory.py`): Creates embedding instances (OpenAI, HuggingFace, or Fake)
-- **VectorStoreFactory** (`src/innieme/vector_store_factory.py`): Creates vector store instances (Chroma, FAISS)
+### Core components
 
-### Configuration System
+- **DiscordBot** (`src/innieme/discord_bot.py`) / **SlackBot** (`src/innieme/slack_bot.py`):
+  platform adapters that handle events, commands, and message routing.
+- **Innie** / **Topic** (`src/innieme/innie.py`): `Innie` holds an outie's topics; `Topic` owns
+  one topic's document store, channels, and conversation engine.
+- **ConversationEngine** (`src/innieme/conversation_engine.py`): query → response via a
+  PydanticAI `Agent`. Imports `TopicConfig` from `discord_bot_config` — shared by both platforms
+  since the config shapes are identical.
+- **DocumentProcessor** (`src/innieme/document_processor.py`): scanning, vectorization,
+  similarity search.
+- **KnowledgeManager** (`src/innieme/knowledge_manager.py`): conversation summarization via a
+  PydanticAI `Agent` with structured `SummaryOutput`, plus knowledge-base storage.
+- **EmbeddingsFactory** (`embeddings_factory.py`) / **VectorStoreFactory**
+  (`vector_store_factory.py`): pluggable embeddings (OpenAI/HuggingFace/Fake) and vector stores
+  (Chroma/FAISS).
 
-The bot uses YAML configuration (`config.yaml`) with the following structure:
-- Multiple "outies" (administrators) can be defined
-- Each outie can have multiple topics
-- Each topic has its own role/system prompt, document directory, and Discord channels
-- Configuration is loaded via `DiscordBotConfig` class
+### Config → runtime object hierarchy
 
-Key top-level config fields:
+Both `DiscordBotConfig` (`discord_bot_config.py`) and `SlackBotConfig` (`slack_bot_config.py`)
+share the same nested YAML shape:
+
+```
+BotConfig                                # top-level: tokens, model/key fields
+  └── outies: List[OutieConfig]          # admins
+        └── topics: List[TopicConfig]    # knowledge domains (role, docs_dir)
+              └── channels: List[ChannelConfig]   # where the bot listens
+```
+
+Pydantic models wire **back-references** via `model_validator(mode='after')`: `OutieConfig.bot`,
+`TopicConfig.outie`, `ChannelConfig.topic`. This lets any nested object reach its parent config
+(e.g. `Topic.__init__` reads `outie_config.bot.llm_model`) without threading arguments around.
+
+Both bot configs expose the same model/key fields, read by `Innie`/`Topic`:
 - `embedding_model`: `"openai"`, `"huggingface"`, or `"fake"`
 - `embeddings_api_key`: API key for the embedding model (required when `embedding_model` is `"openai"`)
 - `llm_model`: PydanticAI model string, e.g. `"openai:gpt-4o"` or `"anthropic:claude-sonnet-4-6"`
 - `llm_api_key`: API key for the LLM provider
 
-### Bot Behavior
+Platform differences:
+- Discord: `discord_token`; `outie_id`/`guild_id`/`channel_id` are **integers**; thread IDs are
+  Discord integer IDs.
+- Slack: `slack_bot_token` + `slack_app_token` (Socket Mode); `outie_id` (`U…`) and `channel_id`
+  (`C…`) are **strings**; thread IDs are Slack message timestamps (strings).
 
-- Bot responds when mentioned in Discord channels
-- Creates threaded conversations for each interaction
-- Follows threads where it was mentioned or initially responded
-- Supports admin commands like "summary and file" and "please consult outie"
-- Admin can approve summaries to add to the knowledge base
+### Channel → Topic routing
 
-## Key Implementation Details
+Both bots build a `defaultdict[channel_id, List[Topic]]` at init. `_identify_topic(channel_id)`
+returns the first topic for a channel. A channel can map to multiple topics, but only the first
+is used.
 
-### Thread Management
-- New mentions create threads automatically
-- Bot tracks active threads in `Topic.active_threads` set
-- Thread context is preserved for conversation continuity
+### Thread tracking
 
-### Document Processing
-- Documents are vectorized using configurable embedding models
-- Vector stores support both Chroma and FAISS backends
-- Document search provides context for LLM responses
+`Topic.active_threads` is the set of thread IDs the bot is actively following. A mention adds the
+thread ID; subsequent messages in that thread are answered automatically without another mention.
 
-### Response Generation
-- Uses PydanticAI `Agent` with a configurable LLM (default: `openai:gpt-3.5-turbo`)
-- LLM provider and model are set via `llm_model` in `config.yaml` (e.g. `"openai:gpt-4o"`, `"anthropic:claude-sonnet-4-6"`)
-- Combines document context with conversation history via `ConversationDependencies`
-- Handles responses longer than Discord's 2000 character limit by sending as files
+### Bot behavior & admin workflow
 
-### Error Handling
-- Comprehensive logging with configurable levels (LOG_LEVEL, INNIEME_LOG_LEVEL environment variables)
-- Graceful error messages sent to Discord users
-- Exception re-raising for debugging purposes
+- Responds when mentioned; creates/follows a thread per interaction.
+- Users can ask to "please consult outie" to bring in an admin.
+- Admins can summarize a thread ("summary and file" on Discord, `/approve` etc. on Slack) and
+  approve the summary to be stored into the knowledge base (`./data/summaries/`).
 
-## Testing Configuration
+### Embedding & vector store selection
 
-Tests are configured for async support with `pytest.ini` settings:
-- `asyncio_mode = strict`
-- Various warning filters for dependencies (faiss, pydantic, numpy, etc.)
+`embedding_model` selects the embeddings backend (use `fake` in tests to avoid real API calls).
+The vector store backend is **hardcoded to Chroma** in `innie.py` (`FAISSVectorStoreFactory` is
+present but commented out).
+
+### Response length limits
+
+- Discord: 2000 chars — overflow sent as a `response.txt` file attachment.
+- Slack: 4000 chars — overflow uploaded via `files_upload`.
+
+## Configuration
+
+Copy the example file(s) for the platform(s) you run and fill in credentials:
+
+```bash
+cp config.example.yaml config.yaml              # Discord
+cp slack_config.example.yaml slack_config.yaml  # Slack
+```
+
+The `role` field in each topic is the LLM system prompt. Each topic has its own `docs_dir` and
+set of channels. The CLI loads the config from the current working directory by default, so run
+from the project root (or pass `-c`).
 
 ## Environment Variables
 
-- `LOG_LEVEL`: Global logging level (default: INFO)
-- `INNIEME_LOG_LEVEL`: Package-specific logging level (default: INFO)
+- `LOG_LEVEL`: root logger level (default `INFO`)
+- `INNIEME_LOG_LEVEL`: `innieme` package logger level (default `INFO`)
