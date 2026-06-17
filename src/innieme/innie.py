@@ -14,30 +14,35 @@ from typing import Dict
 from functools import wraps
 
 class Topic:
-    def __init__(self, outie_config:OutieConfig, api_key:str, config: TopicConfig):
+    def __init__(self, outie_config:OutieConfig, config: TopicConfig):
         self.config = config
         self.outie_config = outie_config
         # Initialize components
         self.document_processor = DocumentProcessor(
             self.config.name,
-            config.docs_dir, 
+            config.docs_dir,
             self._create_embeddings_from_config(
                 {
-                    "type":outie_config.bot.embedding_model, 
-                    "api_key": outie_config.bot.openai_api_key,
+                    "type":outie_config.bot.embedding_model,
+                    "api_key": outie_config.bot.embeddings_api_key,
                     "cache_dir": os.path.join(config.docs_dir, ".cache", "langchain")
                 }
             ),
             ChromaVectorStoreFactory()
 #            FAISSVectorStoreFactory()
         )
-        self.knowledge_manager = KnowledgeManager()
+        self.knowledge_manager = KnowledgeManager(
+            model=outie_config.bot.llm_model,
+            llm_api_key=outie_config.bot.llm_api_key,
+        )
         self.active_threads = set()
+        self.thread_history: Dict[int, list] = {}
         self.conversation_engine = ConversationEngine(
-            api_key,
             config,
-            self.document_processor, 
-            self.knowledge_manager
+            self.document_processor,
+            self.knowledge_manager,
+            model=outie_config.bot.llm_model,
+            llm_api_key=outie_config.bot.llm_api_key,
         )
 
     def _create_embeddings_from_config(self, config: Dict[str, str]) -> EmbeddingsFactory:
@@ -57,22 +62,38 @@ class Topic:
 
     def is_following_thread(self, thread_id:int) -> bool:
         return thread_id in self.active_threads
-    
+
     async def process_query(self, thread_id: int, query: str, context_messages: list[dict[str, str]]) -> str:
         self.active_threads.add(thread_id)
+        self.thread_history[thread_id] = context_messages
         return await self.conversation_engine.process_query(query, context_messages)
-    
+
     async def scan_and_vectorize(self) -> str:
         return await self.document_processor.scan_and_vectorize()
-    
+
     async def generate_summary(self, thread_id) -> str:
-        return await self.knowledge_manager.generate_summary(thread_id)
-    
+        history = self.thread_history.get(thread_id, [])
+        if history:
+            conversation_text = "\n".join(
+                [f"{m['role']}: {m['content']}" for m in history]
+            )
+        else:
+            conversation_text = f"Thread {thread_id}: No conversation history available."
+
+        summary_output = await self.knowledge_manager.generate_summary(thread_id, conversation_text)
+
+        result = f"**{summary_output.suggested_title}**\n\n{summary_output.summary}"
+        if summary_output.key_points:
+            result += "\n\n**Key Points:**\n" + "\n".join(
+                f"• {kp}" for kp in summary_output.key_points
+            )
+        return result
+
     async def store_summary(self, thread_id) -> bool:
         return await self.knowledge_manager.store_summary(thread_id)
 
 class Innie:
-    def __init__(self, api_key:str, outie_config: OutieConfig):
+    def __init__(self, outie_config: OutieConfig):
         """Initialize an Innie instance with configuration"""
         self.outie_config = outie_config
-        self.topics = [Topic(outie_config, api_key, topic_config) for topic_config in outie_config.topics]
+        self.topics = [Topic(outie_config, topic_config) for topic_config in outie_config.topics]

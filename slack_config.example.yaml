@@ -10,11 +10,18 @@ slack_bot_token: "xoxb-your-bot-token-here"
 # Required for Socket Mode
 slack_app_token: "xapp-your-app-token-here"
 
-# OpenAI API Key
-openai_api_key: "your-openai-api-key"
+# API key for the embedding model (required when embedding_model is "openai")
+embeddings_api_key: "your-embeddings-api-key"
 
 # Embedding model to use: openai, huggingface, or fake
 embedding_model: "openai"
+
+# LLM to use for conversation and summarisation
+# Format: "<provider>:<model>", e.g. "openai:gpt-4o", "anthropic:claude-sonnet-4-6"
+llm_model: "openai:gpt-3.5-turbo"
+
+# API key for the LLM provider
+llm_api_key: "your-llm-api-key"
 
 # Bot administrators and their topics
 outies:

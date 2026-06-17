@@ -47,8 +47,10 @@ class OutieConfig(BaseModel):
 class SlackBotConfig(BaseModel):
     slack_bot_token: str
     slack_app_token: str  # For Socket Mode
-    openai_api_key: str
+    embeddings_api_key: str
+    llm_api_key: str
     embedding_model: str
+    llm_model: str = "openai:gpt-3.5-turbo"
     outies: List[OutieConfig]
 
     @field_validator('slack_bot_token')

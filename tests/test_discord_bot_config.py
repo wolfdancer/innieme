@@ -6,9 +6,8 @@ import os
 
 def test_valid_outie_id():
     """Test that a positive outie_id is accepted"""
-    # Create a bot config first
-    bot = DiscordBotConfig(discord_token="test_token", openai_api_key="key", embedding_model="huggingface", outies=[])  # Add minimal bot config
-    outie = OutieConfig(outie_id=1, topics=[], bot=bot)  # Add bot reference
+    bot = DiscordBotConfig(discord_token="test_token", embeddings_api_key="key", llm_api_key="key", embedding_model="huggingface", outies=[])
+    outie = OutieConfig(outie_id=1, topics=[], bot=bot)
     assert outie.outie_id == 1
 
 @pytest.mark.parametrize("invalid_id,expected_message", [
@@ -21,13 +20,14 @@ def test_invalid_outie_id(invalid_id, expected_message):
     """Test that non-positive outie_ids raise ValueError with correct message"""
     with pytest.raises(ValueError) as exc_info:
         OutieConfig(outie_id=invalid_id, topics=[])
-    
+
     assert expected_message in str(exc_info.value)
 
 def test_invalid_discord_token():
     with pytest.raises(ValueError) as exc_info:
         DiscordBotConfig(
-            openai_api_key="test_openai_key",
+            embeddings_api_key="test_key",
+            llm_api_key="test_key",
             embedding_model="huggingface",
             outies=[OutieConfig(outie_id=1, topics=[])]
         )
@@ -43,7 +43,8 @@ def test_config_from_yaml():
     """Test creating config from multi-line YAML content"""
     yaml_content = f"""
     discord_token: "test_discord_token"
-    openai_api_key: "test_openai_key"
+    embeddings_api_key: "test_embeddings_key"
+    llm_api_key: "test_llm_key"
     embedding_model: "openai"
     outies:
       - outie_id: 1
@@ -69,18 +70,18 @@ def test_config_from_yaml():
             - guild_id: "55555555"
               channel_id: "66666666"
     """
-    
+
     config = DiscordBotConfig.from_yaml(yaml_content)
-    
+
     assert config.discord_token == "test_discord_token"
-    assert config.openai_api_key == "test_openai_key"
+    assert config.embeddings_api_key == "test_embeddings_key"
+    assert config.llm_api_key == "test_llm_key"
     assert len(config.outies) == 2
-    
+
     # Verify first outie
     assert config.outies[0].outie_id == 1
     assert config.outies[0].topics[0].name == "math"
-    
+
     # Verify second outie
     assert config.outies[1].outie_id == 2
     assert config.outies[1].topics[0].name == "innieme"
-

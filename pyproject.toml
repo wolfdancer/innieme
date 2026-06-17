@@ -6,15 +6,34 @@ build-backend = "setuptools.build_meta"
 name = "innieme"
 version = "0.1.0"
 description = "Your bot description"
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 dependencies = [
-    # Your dependencies here
+    "discord.py",
+    "slack-bolt",
+    "python-dotenv",
+    "chromadb",
+    "langchain>=0.1.0,<1.0.0",
+    "langchain-community",
+    "langchain-chroma",
+    "langchain-huggingface",
+    "langchain-openai",
+    "pypdf",
+    "python-docx",
+    "faiss-cpu",
+    "numpy",
+    "openai>=1.0.0",
+    "pydantic-ai>=1.0.0",
+    "audioop-lts==0.2.1; python_version >= '3.13'",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
-    # Other development dependencies
+    "pytest-asyncio",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "isort",
 ]
 
 [project.scripts]

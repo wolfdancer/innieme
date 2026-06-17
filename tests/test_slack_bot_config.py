@@ -8,10 +8,11 @@ def test_valid_outie_id():
     """Test that a valid outie_id is accepted"""
     # Create a bot config first
     bot = SlackBotConfig(
-        slack_bot_token="xoxb-test-token", 
+        slack_bot_token="xoxb-test-token",
         slack_app_token="xapp-test-token",
-        openai_api_key="key", 
-        embedding_model="huggingface", 
+        embeddings_api_key="key",
+        llm_api_key="key",
+        embedding_model="huggingface",
         outies=[]
     )
     outie = OutieConfig(outie_id="U1234567890", topics=[], bot=bot)
@@ -30,7 +31,8 @@ def test_invalid_slack_bot_token():
         SlackBotConfig(
             slack_bot_token="",
             slack_app_token="xapp-test-token",
-            openai_api_key="test_openai_key",
+            embeddings_api_key="test_embeddings_key",
+            llm_api_key="test_llm_key",
             embedding_model="huggingface",
             outies=[OutieConfig(outie_id="U1234567890", topics=[])]
         )
@@ -42,7 +44,8 @@ def test_invalid_slack_app_token():
         SlackBotConfig(
             slack_bot_token="xoxb-test-token",
             slack_app_token="",
-            openai_api_key="test_openai_key",
+            embeddings_api_key="test_embeddings_key",
+            llm_api_key="test_llm_key",
             embedding_model="huggingface",
             outies=[OutieConfig(outie_id="U1234567890", topics=[])]
         )
@@ -59,7 +62,8 @@ def test_config_from_yaml():
     yaml_content = f"""
     slack_bot_token: "xoxb-test-discord-token"
     slack_app_token: "xapp-test-app-token"
-    openai_api_key: "test_openai_key"
+    embeddings_api_key: "test_embeddings_key"
+    llm_api_key: "test_llm_key"
     embedding_model: "openai"
     outies:
       - outie_id: "U1234567890"
@@ -87,7 +91,8 @@ def test_config_from_yaml():
     
     assert config.slack_bot_token == "xoxb-test-discord-token"
     assert config.slack_app_token == "xapp-test-app-token"
-    assert config.openai_api_key == "test_openai_key"
+    assert config.embeddings_api_key == "test_embeddings_key"
+    assert config.llm_api_key == "test_llm_key"
     assert len(config.outies) == 2
     
     # Verify first outie
@@ -106,7 +111,8 @@ def test_invalid_embedding_model():
         SlackBotConfig(
             slack_bot_token="xoxb-test-token",
             slack_app_token="xapp-test-token",
-            openai_api_key="test_openai_key",
+            embeddings_api_key="test_embeddings_key",
+            llm_api_key="test_llm_key",
             embedding_model="unsupported_model",
             outies=[]
         )

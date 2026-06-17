@@ -33,7 +33,8 @@ def mock_config():
     config = SlackBotConfig(
         slack_bot_token="xoxb-test-token",
         slack_app_token="xapp-test-token",
-        openai_api_key="test_openai_key",
+        embeddings_api_key="test_embeddings_key",
+        llm_api_key="test_llm_key",
         embedding_model="fake",  # Use fake for testing
         outies=[outie_config]
     )
