@@ -8,6 +8,30 @@ import logging
 import os
 import sys
 
+logger = logging.getLogger(__name__)
+
+# Discord config was renamed from config.yaml to discord_config.yaml. The old
+# name is still accepted as a fallback so existing setups keep working.
+DISCORD_CONFIG_NAME = "discord_config.yaml"
+LEGACY_DISCORD_CONFIG_NAME = "config.yaml"
+
+def resolve_discord_config_path(cwd: str = None) -> str:
+    """Return the default Discord config path.
+
+    Prefers ``discord_config.yaml``. If that file is absent but the legacy
+    ``config.yaml`` exists, returns the legacy path with a deprecation warning.
+    """
+    cwd = cwd or os.getcwd()
+    preferred = os.path.join(cwd, DISCORD_CONFIG_NAME)
+    legacy = os.path.join(cwd, LEGACY_DISCORD_CONFIG_NAME)
+    if not os.path.exists(preferred) and os.path.exists(legacy):
+        logger.warning(
+            "'%s' is deprecated; please rename it to '%s'.",
+            LEGACY_DISCORD_CONFIG_NAME, DISCORD_CONFIG_NAME,
+        )
+        return legacy
+    return preferred
+
 def setup_logging():
     """Set up logging configuration"""
     # Configure root logger with LOG_LEVEL
@@ -32,8 +56,8 @@ def run_discord_bot(config_path: str = None):
     from innieme.discord_bot_config import DiscordBotConfig
     
     if not config_path:
-        config_path = os.path.join(os.getcwd(), 'config.yaml')
-    
+        config_path = resolve_discord_config_path()
+
     try:
         with open(config_path, "r") as yaml_file:
             yaml_content = yaml_file.read()
@@ -80,7 +104,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s discord                    # Run Discord bot with default config.yaml
+  %(prog)s discord                    # Run Discord bot with default discord_config.yaml
   %(prog)s slack                      # Run Slack bot with default slack_config.yaml
   %(prog)s discord -c my_config.yaml  # Run Discord bot with custom config
   %(prog)s slack -c my_slack.yaml     # Run Slack bot with custom config

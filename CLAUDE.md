@@ -19,7 +19,7 @@ pip install -e .
 pip install -r requirements.txt -r requirements-dev.txt
 
 # Run a bot via the unified CLI (-c overrides the default config path)
-innieme discord                       # default: config.yaml
+innieme discord                       # default: discord_config.yaml
 innieme discord -c custom_config.yaml
 innieme slack                         # default: slack_config.yaml
 
@@ -142,8 +142,8 @@ present but commented out).
 Copy the example file(s) for the platform(s) you run and fill in credentials:
 
 ```bash
-cp config.example.yaml config.yaml              # Discord
-cp slack_config.example.yaml slack_config.yaml  # Slack
+cp discord_config.example.yaml discord_config.yaml  # Discord
+cp slack_config.example.yaml slack_config.yaml      # Slack
 ```
 
 The `role` field in each topic is the LLM system prompt. Each topic has its own `docs_dir` and
