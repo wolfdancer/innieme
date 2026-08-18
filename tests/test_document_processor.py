@@ -1,3 +1,4 @@
+import os
 import pytest
 from innieme.document_processor import DocumentProcessor
 from innieme.vector_store_factory import ChromaVectorStoreFactory
@@ -135,3 +136,98 @@ async def test_independent_vectorstores_different_topics(test_docs_dir, test_doc
     # Search for cars in plants processor - should find at most 1 result
     car_results_in_plants = await plants_processor.search_documents("cars")
     assert len(car_results_in_plants) < 2
+@pytest.mark.asyncio
+async def test_search_documents_applies_score_threshold(document_processor):
+    """Chunks scoring below the threshold are dropped"""
+    from unittest.mock import Mock
+    strong, weak = Mock(page_content="strong"), Mock(page_content="weak")
+    document_processor.vectorstore = Mock()
+    document_processor.vectorstore.similarity_search_with_relevance_scores.return_value = [
+        (strong, 0.82), (weak, 0.11),
+    ]
+    results = await document_processor.search_documents("q", top_k=10, score_threshold=0.3)
+    assert results == [strong]
+
+@pytest.mark.asyncio
+async def test_search_documents_without_threshold_skips_scoring(document_processor):
+    """No threshold means the plain similarity search is used"""
+    from unittest.mock import Mock
+    doc = Mock(page_content="text")
+    document_processor.vectorstore = Mock()
+    document_processor.vectorstore.similarity_search.return_value = [doc]
+    results = await document_processor.search_documents("q", top_k=3)
+    assert results == [doc]
+    document_processor.vectorstore.similarity_search.assert_called_once_with("q", k=3)
+    document_processor.vectorstore.similarity_search_with_relevance_scores.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_search_documents_falls_back_when_scoring_unavailable(document_processor):
+    """A store that can't produce relevance scores still returns results"""
+    from unittest.mock import Mock
+    doc = Mock(page_content="text")
+    document_processor.vectorstore = Mock()
+    document_processor.vectorstore.similarity_search_with_relevance_scores.side_effect = (
+        ValueError("no relevance fn for this metric")
+    )
+    document_processor.vectorstore.similarity_search.return_value = [doc]
+    results = await document_processor.search_documents("q", top_k=5, score_threshold=0.5)
+    assert results == [doc]
+
+class TestDocsExclude:
+    """Scanning skips files that are instructions rather than content."""
+
+    def _processor(self, tmp_path, exclude=None):
+        from innieme.document_processor import DocumentProcessor
+        from innieme.embeddings_factory import ExistingEmbeddingsFactory
+        from innieme.vector_store_factory import ChromaVectorStoreFactory
+        from langchain_community.embeddings import FakeEmbeddings
+        return DocumentProcessor(
+            "t", str(tmp_path),
+            ExistingEmbeddingsFactory(FakeEmbeddings(size=1536)),
+            ChromaVectorStoreFactory(),
+            docs_exclude=exclude,
+        )
+
+    def test_claude_md_excluded_by_default(self, tmp_path):
+        p = self._processor(tmp_path)
+        assert p._is_excluded(str(tmp_path / "CLAUDE.md"))
+        assert not p._is_excluded(str(tmp_path / "Northwind.md"))
+
+    def test_excluded_at_any_depth(self, tmp_path):
+        p = self._processor(tmp_path)
+        assert p._is_excluded(str(tmp_path / "sub" / "dir" / "CLAUDE.md"))
+
+    def test_empty_list_disables_exclusion(self, tmp_path):
+        p = self._processor(tmp_path, exclude=[])
+        assert not p._is_excluded(str(tmp_path / "CLAUDE.md"))
+
+    def test_directory_pattern_matches_relative_path(self, tmp_path):
+        p = self._processor(tmp_path, exclude=["archive/*"])
+        assert p._is_excluded(str(tmp_path / "archive" / "old.md"))
+        assert not p._is_excluded(str(tmp_path / "current" / "new.md"))
+
+    def test_glob_pattern_on_basename(self, tmp_path):
+        p = self._processor(tmp_path, exclude=["*-draft.md"])
+        assert p._is_excluded(str(tmp_path / "Northwind-draft.md"))
+        assert not p._is_excluded(str(tmp_path / "Northwind.md"))
+
+    @pytest.mark.asyncio
+    async def test_excluded_file_is_not_vectorized_and_is_reported(self, tmp_path):
+        (tmp_path / "Northwind.md").write_text("Northwind is at stage 3 of the pipeline.")
+        (tmp_path / "CLAUDE.md").write_text("Always invent a next action as a best guess.")
+        p = self._processor(tmp_path)
+        response = await p.scan_and_vectorize()
+
+        assert "1 out of 1 references" in response
+        assert "excluded: CLAUDE.md" in response
+
+        results = await p.search_documents("next action", top_k=10)
+        sources = {os.path.basename(d.metadata["source"]) for d in results}
+        assert sources == {"Northwind.md"}
+
+    @pytest.mark.asyncio
+    async def test_nothing_reported_when_no_exclusions_match(self, tmp_path):
+        (tmp_path / "Northwind.md").write_text("Northwind notes.")
+        p = self._processor(tmp_path)
+        response = await p.scan_and_vectorize()
+        assert "excluded" not in response

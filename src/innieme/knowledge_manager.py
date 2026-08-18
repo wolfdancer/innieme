@@ -39,7 +39,7 @@ class SummaryOutput(BaseModel):
 
 
 class KnowledgeManager:
-    def __init__(self, model: str = "openai:gpt-3.5-turbo", llm_api_key: str = "", summaries_path: str = "./data/summaries"):
+    def __init__(self, model: str = "openai:gpt-5.6-terra", llm_api_key: str = "", summaries_path: str = "./data/summaries"):
         self.summaries_path = summaries_path
         self.pending_summaries = {}  # Maps thread_id to generated summary data
 

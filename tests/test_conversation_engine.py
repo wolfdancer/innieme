@@ -105,3 +105,34 @@ async def test_generate_response_with_history(conversation_engine):
 async def test_context_messages_cannot_be_none(conversation_engine):
     with pytest.raises(AssertionError):
         await conversation_engine.process_query(query="hello", context_messages=None)
+
+def test_format_chunk_includes_source_basename():
+    """Retrieved chunks are labelled with the file they came from"""
+    from innieme.conversation_engine import _format_chunk
+    from unittest.mock import Mock
+    doc = Mock(page_content="Northwind is at stage 3.",
+               metadata={"source": "/Users/x/notes/Northwind.md"})
+    out = _format_chunk(doc)
+    assert "[source: Northwind.md]" in out
+    assert "Northwind is at stage 3." in out
+    assert "/Users/x/notes" not in out  # full path is not leaked to the model
+
+def test_format_chunk_without_metadata_falls_back_to_content():
+    """A chunk with no source metadata still renders its text"""
+    from innieme.conversation_engine import _format_chunk
+    from unittest.mock import Mock
+    doc = Mock(page_content="Some text.", metadata=None)
+    assert _format_chunk(doc) == "Some text."
+
+def test_openai_embeddings_factory_defaults_to_3_small():
+    """The OpenAI backend defaults to text-embedding-3-small, not ada-002"""
+    from innieme.embeddings_factory import OpenAIEmbeddingsFactory
+    assert OpenAIEmbeddingsFactory.DEFAULT_MODEL == "text-embedding-3-small"
+    assert OpenAIEmbeddingsFactory("k").model_name == "text-embedding-3-small"
+
+def test_openai_embeddings_factory_honours_override():
+    """A configured model name wins over the default"""
+    from innieme.embeddings_factory import OpenAIEmbeddingsFactory
+    assert OpenAIEmbeddingsFactory("k", model_name="text-embedding-3-large").model_name == (
+        "text-embedding-3-large"
+    )

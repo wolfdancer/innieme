@@ -1,5 +1,5 @@
 import os, yaml
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -11,6 +11,10 @@ class TopicConfig(BaseModel):
     name: str
     role: str
     docs_dir: str
+    # Filename patterns to skip when scanning this topic's docs_dir. Matched
+    # against both the filename and the docs_dir-relative path. Unset uses the
+    # defaults (see DEFAULT_DOCS_EXCLUDE); an explicit [] scans everything.
+    docs_exclude: Optional[List[str]] = None
     channels: List[ChannelConfig]
     outie: 'OutieConfig' = None  # type: ignore
 
@@ -50,7 +54,20 @@ class SlackBotConfig(BaseModel):
     embeddings_api_key: str
     llm_api_key: str
     embedding_model: str
-    llm_model: str = "openai:gpt-3.5-turbo"
+    llm_model: str = "openai:gpt-5.6-terra"
+    # Where downloaded embedding models are cached. Only used by the
+    # "huggingface" backend. Supports "~". Defaults to a .cache directory
+    # inside each topic's docs_dir when unset.
+    cache_dir: Optional[str] = None
+    # Embedding model name. Backend-specific; when unset each backend uses its
+    # own default (OpenAI: text-embedding-3-small, HuggingFace: all-MiniLM-L6-v2).
+    embeddings_model_name: Optional[str] = None
+    # How many document chunks to send as context per query. Higher values
+    # improve recall at the cost of more input tokens.
+    retrieval_top_k: int = 5
+    # Optional relevance floor (0..1). When set, chunks scoring below it are
+    # dropped, so weak matches don't pad the context out to retrieval_top_k.
+    retrieval_score_threshold: Optional[float] = None
     outies: List[OutieConfig]
 
     @field_validator('slack_bot_token')
