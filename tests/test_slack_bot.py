@@ -601,7 +601,7 @@ class TestParseBotCommand:
         """The whole message has to be the command, or "should we quit?" shuts the bot down."""
         for text in [
             f"<@{self.BOT}> should we rescan the notes?",
-            f"<@{self.BOT}> did the rescan pick up Ford.md",
+            f"<@{self.BOT}> did the rescan pick up Northwind.md",
             f"<@{self.BOT}> what happens when you quit",
             f"<@{self.BOT}> quit rescan",
         ]:
@@ -794,12 +794,12 @@ async def test_ordinary_mention_still_reaches_the_model(mock_config):
     bot.process_and_respond = AsyncMock()
 
     event = {"channel": "C1234567890", "user": "U1234567890",
-             "text": "<@U0BOT> should we rescan the Ford notes?", "ts": "111.1"}
+             "text": "<@U0BOT> should we rescan the Northwind notes?", "ts": "111.1"}
     await bot.handle_mention(event, AsyncMock(), client)
 
     bot.run_bot_command.assert_not_awaited()
     bot.process_and_respond.assert_awaited_once()
-    assert bot.process_and_respond.await_args.args[2] == "should we rescan the Ford notes?"
+    assert bot.process_and_respond.await_args.args[2] == "should we rescan the Northwind notes?"
 
 
 
@@ -877,7 +877,7 @@ async def test_a_question_in_an_unconfigured_channel_still_says_not_set_up(mock_
     say = AsyncMock()
 
     event = {"channel": "C0UNCONFIGURED", "user": "U0ANYONE",
-             "text": "<@U0BOT> what is the Ford deal size?", "ts": "111.1"}
+             "text": "<@U0BOT> what is the Northwind deal size?", "ts": "111.1"}
     await bot.handle_mention(event, say, client)
 
     say.assert_awaited_once()
