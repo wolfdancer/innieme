@@ -53,14 +53,19 @@ first can fail the build), then `pytest`.
 ### Data flow
 
 1. On startup, each `Topic` runs `scan_and_vectorize()` — documents in `docs_dir` are chunked
-   (1000 chars, 200 overlap) and stored in an **in-memory** Chroma collection. A new collection
+   (1000 chars, 200 overlap) and stored in an **in-memory** Chroma collection using **cosine**
+   distance. Each chunk carries a `source` metadata field holding its file path. A new collection
    is created every startup; there is no persistence.
 2. On mention/message, the bot identifies the `Topic` for that channel, gets the `thread_id`,
    and calls `Topic.process_query()`.
-3. `ConversationEngine` runs a similarity search (top-5 chunks) and invokes a PydanticAI `Agent`
-   whose system prompt is built from `ConversationDependencies` (topic `role` + matched doc
-   chunks + thread conversation history).
-4. The LLM is configurable via `llm_model` (default `openai:gpt-3.5-turbo`); the provider/model
+3. `ConversationEngine` runs a similarity search (`retrieval_top_k` chunks, default 5) and invokes
+   a PydanticAI `Agent` whose system prompt is built from `ConversationDependencies` (topic `role`
+   + matched doc chunks + thread conversation history). Chunks are rendered by
+   `conversation_engine._format_chunk()`, which prefixes each with `[source: <basename>]` so the
+   model can attribute an answer to a file. When `retrieval_score_threshold` is set,
+   `search_documents()` scores results and drops those below the floor, falling back to an
+   unfiltered search if the store cannot produce relevance scores.
+4. The LLM is configurable via `llm_model` (default `openai:gpt-5.6-terra`); the provider/model
    string and `llm_api_key` are resolved in `conversation_engine._build_model()`.
 
 ### Core components
@@ -92,15 +97,31 @@ BotConfig                                # top-level: tokens, model/key fields
               └── channels: List[ChannelConfig]   # where the bot listens
 ```
 
+`TopicConfig` also carries `docs_exclude`: filename patterns skipped when scanning that topic's
+`docs_dir`, matched against both the basename and the `docs_dir`-relative path. It is **per topic,
+not bot-level** — each document set has its own non-content files. Unset uses
+`DEFAULT_DOCS_EXCLUDE` (`["CLAUDE.md"]`) in `document_processor.py`; an explicit `[]` scans
+everything. Instruction files must stay out of the corpus: a retrieved chunk of directives is read
+as instructions to follow and can override the answering prompt's own rules.
+
 Pydantic models wire **back-references** via `model_validator(mode='after')`: `OutieConfig.bot`,
 `TopicConfig.outie`, `ChannelConfig.topic`. This lets any nested object reach its parent config
 (e.g. `Topic.__init__` reads `outie_config.bot.llm_model`) without threading arguments around.
 
 Both bot configs expose the same model/key fields, read by `Innie`/`Topic`:
 - `embedding_model`: `"openai"`, `"huggingface"`, or `"fake"`
+- `embeddings_model_name`: optional embedding model name. Unset means the backend's own default —
+  `text-embedding-3-small` (OpenAI) or `all-MiniLM-L6-v2` (HuggingFace), each declared as
+  `DEFAULT_MODEL` on its factory in `embeddings_factory.py`
 - `embeddings_api_key`: API key for the embedding model (required when `embedding_model` is `"openai"`)
-- `llm_model`: PydanticAI model string, e.g. `"openai:gpt-4o"` or `"anthropic:claude-sonnet-4-6"`
+- `llm_model`: PydanticAI model string, e.g. `"openai:gpt-5.6-terra"` or `"anthropic:claude-sonnet-5"`
 - `llm_api_key`: API key for the LLM provider
+- `cache_dir`: optional embedding-model cache location (`huggingface` backend only; supports `~`).
+  Falls back to `<docs_dir>/.cache/langchain` — see `Topic._resolve_cache_dir()`
+- `retrieval_top_k`: max chunks sent as context per query (default 5)
+- `retrieval_score_threshold`: optional relevance floor (0–1). Unset means no filtering
+
+The optional fields are read with `getattr(..., None)` so a config predating them still works.
 
 Platform differences:
 - Discord: `discord_token`; `outie_id`/`guild_id`/`channel_id` are **integers**; thread IDs are
@@ -128,9 +149,17 @@ thread ID; subsequent messages in that thread are answered automatically without
 
 ### Embedding & vector store selection
 
-`embedding_model` selects the embeddings backend (use `fake` in tests to avoid real API calls).
-The vector store backend is **hardcoded to Chroma** in `innie.py` (`FAISSVectorStoreFactory` is
-present but commented out).
+`embedding_model` selects the embeddings backend (use `fake` in tests to avoid real API calls);
+`embeddings_model_name` selects the model within that backend. The vector store backend is
+**hardcoded to Chroma** in `innie.py` (`FAISSVectorStoreFactory` is present but commented out).
+
+`ChromaVectorStoreFactory` sets `hnsw:space: cosine` on every collection. This is deliberate:
+cosine is the right metric for text embeddings, and Chroma's default squared-L2 produces
+normalized relevance scores that can go negative, which makes `retrieval_score_threshold`
+meaningless. Do not drop `COLLECTION_METADATA` without also revisiting the threshold logic.
+
+Note `huggingface` needs `sentence-transformers`, which is **not** in `requirements.txt` — that
+backend raises an `ImportError` until it is installed separately.
 
 ### Response length limits
 

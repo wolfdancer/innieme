@@ -15,7 +15,7 @@ your docs and keep each interaction in its own thread.
 - **Document-grounded answers** — scans and vectorizes a documents directory and uses similarity
   search to ground every response.
 - **Pluggable models** — choose your embedding backend (`openai`, `huggingface`, or `fake` for
-  testing) and any PydanticAI LLM (e.g. `openai:gpt-4o`, `anthropic:claude-sonnet-4-6`).
+  testing) and any PydanticAI LLM (e.g. `openai:gpt-5.6-terra`, `anthropic:claude-sonnet-5`).
 - **Threaded conversations** — each mention spins up a thread and the bot follows it for context.
 - **Multi-topic** — define multiple topics, each with its own system prompt, documents, and
   channels, owned by one or more admins who own the documents.
@@ -24,8 +24,9 @@ your docs and keep each interaction in its own thread.
 
 1. On startup the bot reads its config, vectorizes the documents for each configured topic, and
    connects to the chat platform.
-2. When mentioned in a watched channel, it retrieves relevant document context, builds a prompt
-   (topic role + context + conversation history), and replies in a thread.
+2. When mentioned in a watched channel, it retrieves the most relevant document chunks, builds a
+   prompt (topic role + context + conversation history), and replies in a thread. Each chunk is
+   labelled with the file it came from, so the model can attribute an answer to a source document.
 
 ## Prerequisites
 
@@ -61,13 +62,60 @@ cp slack_config.example.yaml slack_config.yaml      # Slack
 
 Common fields (both platforms):
 
-| Field | Description |
-| --- | --- |
-| `embedding_model` | `"openai"`, `"huggingface"`, or `"fake"` |
-| `embeddings_api_key` | API key for the embedding model (required for `openai`) |
-| `llm_model` | PydanticAI model string, e.g. `"openai:gpt-4o"` or `"anthropic:claude-sonnet-4-6"` |
-| `llm_api_key` | API key for the LLM provider |
-| `outies` | List of admins, each with one or more `topics` (role/system prompt, `docs_dir`, and channels) |
+| Field | Default | Description |
+| --- | --- | --- |
+| `embedding_model` | — | `"openai"`, `"huggingface"`, or `"fake"` (use `fake` in tests to avoid API calls) |
+| `embeddings_model_name` | per backend | Embedding model name. Unset means the backend's default: `text-embedding-3-small` (OpenAI) or `all-MiniLM-L6-v2` (HuggingFace) |
+| `embeddings_api_key` | — | API key for the embedding model (required for `openai`) |
+| `llm_model` | `openai:gpt-5.6-terra` | PydanticAI model string, e.g. `"openai:gpt-5.6-terra"` or `"anthropic:claude-sonnet-5"` |
+| `llm_api_key` | — | API key for the LLM provider |
+| `cache_dir` | `<docs_dir>/.cache` | Where downloaded embedding models are cached. Only used by the `huggingface` backend; supports `~` |
+| `retrieval_top_k` | `5` | Maximum document chunks sent to the model as context per query |
+| `retrieval_score_threshold` | unset | Optional relevance floor (0–1). Drops weak matches instead of padding context out to `retrieval_top_k` |
+| `outies` | — | List of admins, each with one or more `topics` |
+
+Per-topic fields, inside each entry of a topic list:
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `name` | — | Topic name |
+| `role` | — | The topic's system prompt |
+| `docs_dir` | — | Directory of documents to ingest for this topic |
+| `docs_exclude` | `["CLAUDE.md"]` | Filename patterns to skip when scanning this topic's `docs_dir`. Set to `[]` to scan everything |
+| `channels` | — | Channels where this topic answers |
+
+### Tuning retrieval
+
+`retrieval_top_k` caps how much document context each answer is built from. Raising it improves
+recall on questions that span several documents, at the cost of more input tokens — and of more
+irrelevant context, which degrades answer quality more often than it helps.
+
+`retrieval_score_threshold` makes the count adaptive: chunks are still capped at
+`retrieval_top_k`, but any scoring below the floor are dropped, so a narrow question returns only
+the two or three chunks that actually matter. It is unset by default, which is the safe choice —
+setting it too high makes the bot report that something is absent when it is present. Pick a
+value by measuring rather than guessing: compare the scores for questions you know your documents
+answer against questions you know they do not, and choose a value between the two ranges. If the
+ranges overlap, no threshold will separate them and it should stay off.
+
+Chroma collections use cosine distance, which is the appropriate metric for text embeddings and
+keeps relevance scores in a usable 0–1 range.
+
+### Excluding files from the knowledge base
+
+`docs_exclude` is set **per topic**, next to that topic's `docs_dir` — different document sets
+have different non-content files, so one global list would be wrong for most of them. Each pattern
+is matched against both the filename and the path relative to `docs_dir`, so `CLAUDE.md` skips that
+file at any depth while `archive/*` skips a subdirectory.
+
+It defaults to `["CLAUDE.md"]`. Agent instruction files are not subject-matter content, and
+ingesting them is actively harmful: a retrieved chunk of instructions reads to the model as
+directions to follow, so rules written for one task ("always produce a next action, even if it's a
+guess") can override the answering prompt's rules ("never invent a next step"). Set `docs_exclude`
+to `[]` to scan everything.
+
+Excluded files are named in the startup message and the logs, so a document missing from the
+knowledge base is never a silent mystery.
 
 Platform-specific fields:
 
