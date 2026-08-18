@@ -19,10 +19,17 @@ class VectorStoreFactory(ABC):
         pass
 
 class ChromaVectorStoreFactory(VectorStoreFactory):
+    # Cosine is the right metric for text embeddings (OpenAI's are normalised),
+    # and it is what keeps relevance scores in a usable 0..1 range. Chroma
+    # defaults to squared L2, whose normalised scores can go negative and make
+    # a score threshold meaningless.
+    COLLECTION_METADATA = {"hnsw:space": "cosine"}
+
     def create_empty_store(self, collection_name: str, embeddings: Embeddings) -> VectorStore:
         return Chroma(
             collection_name=collection_name,
             embedding_function=embeddings,
+            collection_metadata=self.COLLECTION_METADATA,
         )
 
     def create_from_texts(self, texts: List[str], embeddings: Embeddings, collection_name: str, metadatas: Optional[List[Dict]] = None) -> VectorStore:
@@ -30,7 +37,8 @@ class ChromaVectorStoreFactory(VectorStoreFactory):
             texts,
             embeddings,
             collection_name=collection_name,
-            metadatas=metadatas
+            metadatas=metadatas,
+            collection_metadata=self.COLLECTION_METADATA,
         )
 
 class FAISSVectorStoreFactory(VectorStoreFactory):

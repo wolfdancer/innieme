@@ -12,17 +12,40 @@ discord_token: discord_bot_token
 # Options: "openai", "huggingface", "fake"
 embedding_model: "openai"
 
+# Embedding model name. Backend-specific. When unset, each backend uses its own
+# default: OpenAI -> text-embedding-3-small, HuggingFace -> all-MiniLM-L6-v2.
+# embeddings_model_name: "text-embedding-3-small"
+
 # API key for the embedding model (only required when embedding_model is "openai")
 embeddings_api_key: openai_api_key
 
 # LLM to use for conversation and summarisation
-# Format: "<provider>:<model>", e.g. "openai:gpt-4o", "anthropic:claude-sonnet-4-6"
-llm_model: "openai:gpt-3.5-turbo"
+# Format: "<provider>:<model>", e.g. "openai:gpt-5.6-terra",
+# "anthropic:claude-sonnet-5". Check the provider's docs for current model IDs.
+llm_model: "openai:gpt-5.6-terra"
 
 # API key for the LLM provider
 # For OpenAI: https://platform.openai.com/api-keys
 # For Anthropic: https://console.anthropic.com/settings/keys
 llm_api_key: llm_api_key
+
+# Where downloaded embedding models are cached. Only used when embedding_model
+# is "huggingface". Supports "~". When unset, defaults to a .cache directory
+# inside each topic's docs_dir.
+# cache_dir: "~/.cache/innieme"
+
+# How many document chunks to send to the model as context per query.
+# Higher values improve recall at the cost of more input tokens. Defaults to 5.
+# retrieval_top_k: 10
+
+# Optional relevance floor between 0 and 1. When set, retrieved chunks scoring
+# below it are dropped, so a query with few relevant chunks returns only those
+# instead of padding the context out to retrieval_top_k. Unset means no
+# filtering, which is the safe default: too high a value makes the bot answer
+# "not in the documents" for things that are. Measure before setting it --
+# compare scores for questions you know are answerable against ones you know
+# are not, and pick a value between the two ranges.
+# retrieval_score_threshold: 0.3
 
 outies:
 # To get your Discord admin user ID:
@@ -39,6 +62,14 @@ outies:
           This is the "system prompt" that will be used to set the context for the bot.
 # Path to the directory containing the documents to be processed
         docs_dir: "./data/documents"
+# Filenames to skip in this topic's docs_dir. Each pattern is matched against
+# both the filename and the docs_dir-relative path, so "CLAUDE.md" skips it at
+# any depth and "archive/*" skips a subfolder. Defaults to ["CLAUDE.md"]: agent
+# instruction files are not subject-matter content, and a retrieved chunk of
+# instructions gets followed as directions. Use [] to scan everything.
+#        docs_exclude:
+#          - "CLAUDE.md"
+#          - "*-draft.md"
         channels:
 # To get your Discord server (guild) ID:
 # 1. Open Discord and go to User Settings (gear icon)

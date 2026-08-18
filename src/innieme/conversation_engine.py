@@ -6,8 +6,22 @@ from .document_processor import DocumentProcessor
 from .knowledge_manager import KnowledgeManager
 from .discord_bot_config import TopicConfig
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+
+def _format_chunk(doc) -> str:
+    """Render one retrieved chunk, labelled with the file it came from.
+
+    The source filename lets the model attribute a detail to a specific
+    document; without it the chunks arrive anonymously and any citation the
+    model offers is a guess.
+    """
+    source = (doc.metadata or {}).get("source")
+    if not source:
+        return doc.page_content
+    return f"[source: {os.path.basename(source)}]\n{doc.page_content}"
 
 
 def _build_model(model_str: str, api_key: str):
@@ -59,13 +73,20 @@ class ConversationEngine:
         topic: TopicConfig,
         document_processor: DocumentProcessor,
         knowledge_manager: KnowledgeManager,
-        model: str = "openai:gpt-3.5-turbo",
+        model: str = "openai:gpt-5.6-terra",
         llm_api_key: str = "",
     ):
         self.topic = topic
         self.outie_id = topic.outie.outie_id
         self.document_processor = document_processor
         self.knowledge_manager = knowledge_manager
+        # How many document chunks to feed the model as context per query, and
+        # an optional relevance floor so weak matches are dropped rather than
+        # padding the context out to retrieval_top_k.
+        self.retrieval_top_k = getattr(topic.outie.bot, "retrieval_top_k", None) or 5
+        self.retrieval_score_threshold = getattr(
+            topic.outie.bot, "retrieval_score_threshold", None
+        )
 
         self.agent = Agent(
             model=_build_model(model, llm_api_key),
@@ -88,7 +109,11 @@ class ConversationEngine:
         if "outie please" == query.lower():
             return f"<@{self.outie_id}> Your consultation has been requested in this thread."
 
-        relevant_docs = await self.document_processor.search_documents(query)
+        relevant_docs = await self.document_processor.search_documents(
+            query,
+            top_k=self.retrieval_top_k,
+            score_threshold=self.retrieval_score_threshold,
+        )
         return await self._generate_response(query, relevant_docs, context_messages)
 
     async def _generate_response(self, query: str, relevant_docs, history) -> str:
@@ -99,7 +124,7 @@ class ConversationEngine:
             relevant_docs: List of relevant document chunks from document processor
             history: List of previous conversation messages (excluding current query)
         """
-        context = "\n\n".join([doc.page_content for doc in relevant_docs])
+        context = "\n\n".join(_format_chunk(doc) for doc in relevant_docs)
 
         logger.debug("--------- Sent to LLM ---------")
         logger.debug(f"System message: {self.topic.role}")

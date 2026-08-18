@@ -12,14 +12,24 @@ class EmbeddingsFactory(ABC):
         pass
 
 class OpenAIEmbeddingsFactory(EmbeddingsFactory):
-    def __init__(self, api_key: str):
+    # langchain's own default is the legacy text-embedding-ada-002, which is
+    # both weaker on retrieval and five times the price.
+    DEFAULT_MODEL = "text-embedding-3-small"
+
+    def __init__(self, api_key: str, model_name: str = DEFAULT_MODEL):
         self.api_key = api_key
+        self.model_name = model_name
 
     def create_embeddings(self) -> Embeddings:
-        return OpenAIEmbeddings(api_key=SecretStr(self.api_key))
+        return OpenAIEmbeddings(
+            api_key=SecretStr(self.api_key),
+            model=self.model_name,
+        )
 
 class HuggingFaceEmbeddingsFactory(EmbeddingsFactory):
-    def __init__(self, cache_dir: str, model_name: str = "all-MiniLM-L6-v2"):
+    DEFAULT_MODEL = "all-MiniLM-L6-v2"
+
+    def __init__(self, cache_dir: str, model_name: str = DEFAULT_MODEL):
         self.model_name = model_name
         self.cache_dir = cache_dir
 

@@ -25,11 +25,14 @@ class Topic:
                 {
                     "type":outie_config.bot.embedding_model,
                     "api_key": outie_config.bot.embeddings_api_key,
-                    "cache_dir": os.path.join(config.docs_dir, ".cache", "langchain")
+                    "model_name": getattr(outie_config.bot, "embeddings_model_name", None),
+                    "cache_dir": self._resolve_cache_dir(outie_config, config)
                 }
             ),
-            ChromaVectorStoreFactory()
+            ChromaVectorStoreFactory(),
 #            FAISSVectorStoreFactory()
+            # Per-topic: each docs_dir has its own non-content files to skip.
+            docs_exclude=getattr(config, "docs_exclude", None),
         )
         self.knowledge_manager = KnowledgeManager(
             model=outie_config.bot.llm_model,
@@ -45,15 +48,34 @@ class Topic:
             llm_api_key=outie_config.bot.llm_api_key,
         )
 
+    @staticmethod
+    def _resolve_cache_dir(outie_config: OutieConfig, config: TopicConfig) -> str:
+        """Where to cache downloaded embedding models.
+
+        Uses the bot-level ``cache_dir`` when set, so caches can live outside the
+        documents directory. Falls back to a ``.cache`` directory inside
+        ``docs_dir`` to preserve behaviour for configs that predate the setting.
+        """
+        cache_dir = getattr(outie_config.bot, "cache_dir", None)
+        if cache_dir:
+            return os.path.expanduser(cache_dir)
+        return os.path.join(config.docs_dir, ".cache", "langchain")
+
     def _create_embeddings_from_config(self, config: Dict[str, str]) -> EmbeddingsFactory:
         embedding_type = config.get("type", "<empty>")
+        # An unset model_name means "whatever this backend's default is" — the
+        # two backends have different sensible defaults.
+        model_name = config.get("model_name")
         if embedding_type == "openai":
             api_key = config['api_key']
-            return OpenAIEmbeddingsFactory(api_key)
+            return OpenAIEmbeddingsFactory(
+                api_key,
+                model_name=model_name or OpenAIEmbeddingsFactory.DEFAULT_MODEL,
+            )
         elif embedding_type == "huggingface":
             return HuggingFaceEmbeddingsFactory(
                 cache_dir=config['cache_dir'],
-                model_name=config.get("model_name", "all-MiniLM-L6-v2")
+                model_name=model_name or HuggingFaceEmbeddingsFactory.DEFAULT_MODEL,
             )
         elif embedding_type == "fake":
             return ExistingEmbeddingsFactory(FakeEmbeddings(size=1536))
