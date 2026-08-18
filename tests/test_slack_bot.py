@@ -1,4 +1,4 @@
-from innieme.slack_bot import SlackBot, parse_bot_command
+from innieme.slack_bot import SlackBot, parse_bot_command, hello_blocks
 from innieme.slack_bot_config import SlackBotConfig, OutieConfig, TopicConfig, ChannelConfig
 
 import pytest
@@ -171,9 +171,12 @@ async def test_start_builds_handler_inside_event_loop(mock_handler, mock_app, mo
     bot.innies = []  # skip document scanning / channel connection
     await bot.start()
 
+    # Built exactly once, inside start(), with the app token.
     mock_handler.assert_called_once_with(bot.app, "xapp-test-token")
-    assert bot.handler is handler_instance
     handler_instance.connect_async.assert_awaited_once()
+    # Dropped again on the way out; see
+    # test_a_completed_run_leaves_no_handler_to_reuse.
+    assert bot.handler is None
 
 @pytest.mark.asyncio
 @patch('innieme.slack_bot.AsyncApp')
@@ -230,16 +233,20 @@ async def test_failed_startup_closes_the_handler(mock_handler, mock_app, mock_co
 
     handler_instance.close_async.assert_awaited_once()
     handler_instance.connect_async.assert_not_awaited()
-    # Reset, so a later stop() closes the handler instead of setting an event
-    # that nothing is waiting on.
+    # Reset, so a retry builds a fresh handler rather than reusing a dead one.
     assert bot._shutdown is None
+    assert bot.handler is None
 
 
 @pytest.mark.asyncio
 @patch('innieme.slack_bot.AsyncApp')
 @patch('innieme.slack_bot.AsyncSocketModeHandler')
-async def test_stop_after_start_returns_still_closes_the_handler(mock_handler, mock_app, mock_config):
-    """stop() after a completed run falls back to closing the handler directly"""
+async def test_a_completed_run_leaves_no_handler_to_reuse(mock_handler, mock_app, mock_config):
+    """The closed handler is dropped, and a second stop() is a harmless no-op.
+
+    Keeping it would let a second start() reconnect a client whose aiohttp
+    session is already closed.
+    """
     mock_app.return_value = Mock(client=Mock())
     handler_instance = Mock()
     handler_instance.close_async = AsyncMock()
@@ -250,10 +257,13 @@ async def test_stop_after_start_returns_still_closes_the_handler(mock_handler, m
     bot.innies = []
     await bot.start()
 
-    handler_instance.close_async.reset_mock()
-    await bot.stop()
-
+    assert bot.handler is None
+    assert bot._shutdown is None
     handler_instance.close_async.assert_awaited_once()
+
+    handler_instance.close_async.reset_mock()
+    await bot.stop()  # nothing left to close; must not raise
+    handler_instance.close_async.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -559,12 +569,30 @@ class TestParseBotCommand:
     def test_bare_command_after_mention(self):
         assert parse_bot_command(f"<@{self.BOT}> rescan", self.BOT) == "rescan"
         assert parse_bot_command(f"<@{self.BOT}> quit", self.BOT) == "quit"
+        assert parse_bot_command(f"<@{self.BOT}> hello", self.BOT) == "hello"
 
     def test_case_and_surrounding_whitespace_ignored(self):
         assert parse_bot_command(f"  <@{self.BOT}>   ReScan  ", self.BOT) == "rescan"
 
     def test_trailing_punctuation_ignored(self):
         assert parse_bot_command(f"<@{self.BOT}> quit!", self.BOT) == "quit"
+        assert parse_bot_command(f"<@{self.BOT}> hello.", self.BOT) == "hello"
+        assert parse_bot_command(f"<@{self.BOT}> rescan ...", self.BOT) == "rescan"
+
+    def test_leading_punctuation_is_not_stripped(self):
+        """":quit:" is an emoji, ".quit" is a typo -- neither is an instruction."""
+        for text in [
+            f"<@{self.BOT}> :quit:",
+            f"<@{self.BOT}> .quit",
+            f"<@{self.BOT}> -rescan",
+            f"<@{self.BOT}> :rescan:",
+        ]:
+            assert parse_bot_command(text, self.BOT) is None, text
+
+    def test_trailing_question_mark_is_a_question_not_a_command(self):
+        """"@bot quit?" asks about quitting; it must not shut the bot down."""
+        assert parse_bot_command(f"<@{self.BOT}> quit?", self.BOT) is None
+        assert parse_bot_command(f"<@{self.BOT}> rescan?", self.BOT) is None
 
     def test_command_before_the_mention(self):
         assert parse_bot_command(f"rescan <@{self.BOT}>", self.BOT) == "rescan"
@@ -646,6 +674,28 @@ async def test_failed_rescan_says_the_old_index_is_still_serving(mock_config):
     # paths and provider internals, and would be posted unescaped.
     assert "embeddings down" not in text
     assert "previously loaded" in text
+    client.reactions_remove.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_success_post_is_not_reported_as_a_failed_rescan(mock_config):
+    """The scan succeeded; saying the old index is still serving would be a lie"""
+    client = Mock()
+    client.chat_postMessage = AsyncMock(side_effect=RuntimeError("slack down"))
+    client.reactions_add = AsyncMock()
+    client.reactions_remove = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic()
+    topic.scan_and_vectorize = AsyncMock(return_value="On topic 'math': 12 chunks created")
+
+    with pytest.raises(RuntimeError):
+        await bot.rescan(topic, "C1234567890", "111.1", "111.1")
+
+    # One attempt, carrying the success text -- no second "Rescan failed" post.
+    assert client.chat_postMessage.await_count == 1
+    assert "Rescan complete" in client.chat_postMessage.await_args.kwargs["text"]
+    # And the indicator is still cleared.
     client.reactions_remove.assert_awaited_once()
 
 
@@ -751,3 +801,85 @@ async def test_ordinary_mention_still_reaches_the_model(mock_config):
     bot.process_and_respond.assert_awaited_once()
     assert bot.process_and_respond.await_args.args[2] == "should we rescan the Northwind notes?"
 
+
+
+@pytest.mark.asyncio
+async def test_hello_mention_posts_the_card(mock_config):
+    """"@bot hello" replaces the /hello slash command"""
+    client = Mock()
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+    bot._identify_topic = Mock(return_value=_topic())
+    bot.process_and_respond = AsyncMock()
+
+    event = {"channel": "C1234567890", "user": "U1234567890",
+             "text": "<@U0BOT> hello", "ts": "111.1"}
+    await bot.handle_mention(event, AsyncMock(), client)
+
+    posted = client.chat_postMessage.await_args_list[-1].kwargs
+    assert posted["blocks"] == hello_blocks()
+    # Fallback text as well as blocks: a blocks-only message is blank in
+    # notifications and anywhere blocks do not render.
+    assert posted["text"]
+    assert posted["thread_ts"] == "111.1"
+    bot.process_and_respond.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_hello_is_open_to_everyone(mock_config):
+    """The /hello slash command was ungated; the mention must stay ungated"""
+    client = Mock()
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+    bot._identify_topic = Mock(return_value=_topic(outie_id="U1234567890"))
+
+    event = {"channel": "C1234567890", "user": "U0SOMEONEELSE",
+             "text": "<@U0BOT> hello", "ts": "111.1"}
+    await bot.handle_mention(event, AsyncMock(), client)
+
+    posted = client.chat_postMessage.await_args_list[-1].kwargs
+    assert posted["blocks"] == hello_blocks()
+    assert "only available to the outie" not in (posted.get("text") or "")
+
+
+@pytest.mark.asyncio
+async def test_hello_works_in_a_channel_with_no_topic(mock_config):
+    """"is this bot alive?" is asked exactly where nothing is configured yet.
+
+    /hello needed no topic, so the mention must not answer "not set up" instead.
+    """
+    client = Mock()
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+    bot._identify_topic = Mock(return_value=None)
+    say = AsyncMock()
+
+    event = {"channel": "C0UNCONFIGURED", "user": "U0ANYONE",
+             "text": "<@U0BOT> hello", "ts": "111.1"}
+    await bot.handle_mention(event, say, client)
+
+    say.assert_not_awaited()
+    assert client.chat_postMessage.await_args_list[-1].kwargs["blocks"] == hello_blocks()
+
+
+@pytest.mark.asyncio
+async def test_a_question_in_an_unconfigured_channel_still_says_not_set_up(mock_config):
+    """Only hello skips the topic check; a real question must not silently vanish"""
+    client = Mock()
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+    bot._identify_topic = Mock(return_value=None)
+    bot.process_and_respond = AsyncMock()
+    say = AsyncMock()
+
+    event = {"channel": "C0UNCONFIGURED", "user": "U0ANYONE",
+             "text": "<@U0BOT> what is the Northwind deal size?", "ts": "111.1"}
+    await bot.handle_mention(event, say, client)
+
+    say.assert_awaited_once()
+    assert "not set up" in say.await_args.kwargs["text"]
+    bot.process_and_respond.assert_not_awaited()
