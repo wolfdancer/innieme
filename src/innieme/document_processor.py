@@ -98,15 +98,35 @@ class DocumentProcessor:
             logger.info(f"  - skipped (excluded): {os.path.basename(file_path)}")
         # Process each file based on its type
         count = 0
+        failures = 0
         for file_path in files:
             logger.info(f"  - {file_path}")
             text = await self._extract_text(file_path)
-            if text:
+            if text is None:
+                # _extract_text logs the cause and returns None.
+                logger.error(f"    Text extraction failed for {file_path}")
+                failures += 1
+            elif not text.strip():
+                # Readable but empty, which is not a failure: an empty file has
+                # nothing to contribute and should not hold up the rest.
+                logger.warning(f"    No text in {file_path}")
+            else:
                 document_texts.append({"text": text, "source": file_path})
                 count += 1
-            else:
-                logger.error(f"    Text extraction failed for {file_path}")
         logger.info(f"Done. Extracted text from {count} documents")
+
+        if failures and not count:
+            # Every readable candidate failed — a permissions change, a corrupt
+            # file, an unreadable encoding. Raising *before* self.vectorstore is
+            # reassigned is what keeps the previous index intact, which matters
+            # now that a rescan can run on a live bot: replacing a working store
+            # with an empty one would make the bot answer "not in my documents"
+            # for everything it knew a moment ago. A partial failure still goes
+            # through, and is reported in the returned message.
+            raise RuntimeError(
+                f"On topic '{self.topic}': found {len(files)} document(s) under {self.docs_dir} "
+                f"but could not extract text from any of them"
+            )
 
         # Split texts into chunks
         all_chunks = []
@@ -166,7 +186,11 @@ class DocumentProcessor:
             reader = pypdf.PdfReader(file)
             for page_num in range(len(reader.pages)):
                 page = reader.pages[page_num]
-                text += page.extract_text() + "\n"
+                # "or \"\"" because a page with no extractable text is normal (an
+                # image-only scan). pypdf types this as str, but concatenating a
+                # None here would raise, and a raise now counts as an extraction
+                # failure rather than an empty file.
+                text += (page.extract_text() or "") + "\n"
         return text
     
     async def _extract_from_docx(self, file_path):

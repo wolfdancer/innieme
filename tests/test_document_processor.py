@@ -234,3 +234,58 @@ class TestDocsExclude:
         p = self._processor(tmp_path)
         response = await p.scan_and_vectorize()
         assert "excluded" not in response
+
+
+@pytest.mark.asyncio
+async def test_total_extraction_failure_keeps_the_previous_store(document_processor, test_docs_dir):
+    """A rescan must not replace a working index with an empty one.
+
+    scan_and_vectorize() can now run on a live bot, so an unreadable documents
+    directory would otherwise swap in an empty store and leave the bot answering
+    "not in my documents" for everything it knew a moment ago.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    (test_docs_dir / "broken.md").write_text("content")
+    await document_processor.scan_and_vectorize()
+    healthy_store = document_processor.vectorstore
+    assert healthy_store is not None
+
+    with patch.object(document_processor, '_extract_text', AsyncMock(return_value=None)):
+        with pytest.raises(RuntimeError, match="could not extract text"):
+            await document_processor.scan_and_vectorize()
+
+    assert document_processor.vectorstore is healthy_store
+
+
+@pytest.mark.asyncio
+async def test_partial_extraction_failure_still_rebuilds(document_processor, test_docs_dir):
+    """One bad file must not block the rest; the count is reported"""
+    from unittest.mock import patch
+
+    (test_docs_dir / "good.md").write_text("Vectorizable content about widgets.")
+    (test_docs_dir / "bad.md").write_text("also content")
+
+    real_extract = document_processor._extract_text
+
+    async def fail_one(file_path):
+        if file_path.endswith("bad.md"):
+            return None
+        return await real_extract(file_path)
+
+    with patch.object(document_processor, '_extract_text', side_effect=fail_one):
+        result = await document_processor.scan_and_vectorize()
+
+    assert "1 out of 2 references" in result
+
+
+@pytest.mark.asyncio
+async def test_empty_files_are_not_treated_as_failures(document_processor, test_docs_dir):
+    """An empty file contributes nothing, but must not fail the whole scan"""
+    (test_docs_dir / "empty.md").write_text("")
+    (test_docs_dir / "blank.md").write_text("   \n\n")
+
+    result = await document_processor.scan_and_vectorize()
+
+    assert "no documents found to process" in result
+    assert document_processor.vectorstore is not None

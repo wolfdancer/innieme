@@ -41,6 +41,40 @@ _STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
 # Emoji shown on the message being worked on. No colons — the API wants the bare name.
 WORKING_REACTION = "thinking_face"
 
+# Commands given by mentioning the bot, e.g. "@InnieMe rescan". Mentions are used
+# rather than slash commands because a slash command has to be declared in the
+# Slack app config as well as here, so it cannot ship in code alone.
+#
+# "quit" and "rescan" act on the channel's topic and are outie-only. "hello" is
+# an information card: no topic required and open to everyone, matching the
+# /hello slash command it replaces.
+BOT_COMMANDS = frozenset({"quit", "rescan", "hello"})
+
+_ANY_MENTION_RE = re.compile(r"<@[UWB][A-Z0-9]*>")
+
+# Trailing punctuation someone may type without meaning anything by it. Stripped
+# from the end only: ":quit:" is an emoji and ".quit" is not an instruction, so
+# treating either as the command would hand a shutdown to a stray keystroke. "?"
+# is deliberately absent — "@InnieMe quit?" is a question about quitting.
+_COMMAND_TRAILING_PUNCTUATION = "!.,;:"
+
+
+def parse_bot_command(text: str, bot_user_id: str) -> Optional[str]:
+    """The bot command in a message, or None if it is an ordinary question.
+
+    The whole message, minus mentions and trailing punctuation, has to *be* the
+    command: "@InnieMe rescan" is a command, "@InnieMe should we rescan the
+    notes?" is a question about rescanning. Substring matching would turn any
+    mention of the word into a shutdown, which is worth guarding against even
+    though only the outie can trigger one.
+    """
+    if not text or f"<@{bot_user_id}>" not in text:
+        return None
+    remainder = _ANY_MENTION_RE.sub(" ", text)
+    word = remainder.strip().rstrip(_COMMAND_TRAILING_PUNCTUATION).strip().lower()
+    return word if word in BOT_COMMANDS else None
+
+
 # Slack recommends keeping a message under 4,000 characters and truncates at
 # 40,000. Sit a little under the recommendation for headroom.
 SLACK_MESSAGE_LIMIT = 3900
@@ -95,6 +129,45 @@ def split_for_slack(text: str, limit: int = SLACK_MESSAGE_LIMIT) -> List[str]:
         inside_fence = ends_inside
 
     return parts
+
+
+# Fallback text for the card. Slack uses it for notifications and any surface
+# that cannot render blocks; a blocks-only message shows up blank there.
+HELLO_FALLBACK_TEXT = "InnieMe: Your Knowledge Speaks for Itself"
+
+
+def hello_blocks() -> List[Dict[str, Any]]:
+    """The introduction card posted in reply to "@bot hello"."""
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "InnieMe: Your Knowledge Speaks for Itself"
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "Democratizes access to AI-powered Q&A capabilities\n\n*Pricing:* Free during early access\n*Key Feature:* Ask and you shall receive\n*Deployment:* Channel specific"
+            },
+            "accessory": {
+                "type": "image",
+                "image_url": "https://repository-images.githubusercontent.com/956066438/8dce1cee-0386-423d-817c-283e3dfb7288",
+                "alt_text": "InnieMe logo"
+            }
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "*InnieMe © 2025* | <https://github.com/wolfdancer/innieme|GitHub>"
+                }
+            ]
+        }
+    ]
 
 
 def _escape_slack(text: str) -> str:
@@ -189,6 +262,9 @@ class SlackBot:
         # asyncio.run(), so the handler is created in start() instead.
         self._app_token = config.slack_app_token
         self.handler: Optional[AsyncSocketModeHandler] = None
+        # Set by stop() to release start(). Created in start() for the same
+        # reason as the handler: an asyncio.Event binds to the running loop.
+        self._shutdown: Optional[asyncio.Event] = None
 
         # Innies setup        
         self.innies = [Innie(outie_config) for outie_config in config.outies]
@@ -222,70 +298,9 @@ class SlackBot:
             await ack()
             await self.approve_summary(command, client)
                     
-        @self.app.command("/quit")
-        async def quit_command(ack, command, client):
-            await ack()
-            topic = self._identify_topic(command["channel_id"])
-            if not topic:
-                await client.chat_postMessage(
-                    channel=command["channel_id"],
-                    text="'quit' command ignored as there is no topic in this channel to support."
-                )
-                return
-            
-            topic_outie = topic.outie_config.outie_id
-            if command["user_id"] != topic_outie:
-                await client.chat_postMessage(
-                    channel=command["channel_id"],
-                    text=f"This command is only available to the outie (<@{topic_outie}>)."
-                )
-                return
-            
-            await client.chat_postMessage(
-                channel=command["channel_id"],
-                text="Goodbye! Bot shutting down..."
-            )
-            await self.stop()
-
-        @self.app.command("/hello")
-        async def hello_command(ack, command, client):
-            await ack()
-            # Create a rich message block
-            blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "InnieMe: Your Knowledge Speaks for Itself"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "Democratizes access to AI-powered Q&A capabilities\n\n*Pricing:* Free during early access\n*Key Feature:* Ask and you shall receive\n*Deployment:* Channel specific"
-                    },
-                    "accessory": {
-                        "type": "image",
-                        "image_url": "https://repository-images.githubusercontent.com/956066438/8dce1cee-0386-423d-817c-283e3dfb7288",
-                        "alt_text": "InnieMe logo"
-                    }
-                },
-                {
-                    "type": "context",
-                    "elements": [
-                        {
-                            "type": "mrkdwn",
-                            "text": "*InnieMe © 2025* | <https://github.com/wolfdancer/innieme|GitHub>"
-                        }
-                    ]
-                }
-            ]
-            
-            await client.chat_postMessage(
-                channel=command["channel_id"],
-                blocks=blocks
-            )
+        # "quit", "rescan" and "hello" are mention commands (see
+        # parse_bot_command), not slash commands: they need no Slack-side app
+        # configuration to work.
 
     def _identify_topic(self, channel_id: str) -> Optional[Topic]:
         topics = self.channels.get(channel_id, [])
@@ -412,15 +427,32 @@ class SlackBot:
         text = event["text"]
         ts = event["ts"]
         
+        bot_user_id = (await client.auth_test())["user_id"]
+
+        # Commands are handled here rather than in handle_message because
+        # app_mention fires for every mention, in a channel or inside a thread.
+        command = parse_bot_command(text, bot_user_id)
+
+        # Ahead of the topic check, because "hello" is how someone checks the bot
+        # is alive -- including in a channel nobody has configured a topic for,
+        # which is where that question comes up. The /hello slash command it
+        # replaces needed no topic either.
+        if command == "hello":
+            await self.post_hello(channel_id, event.get("thread_ts") or event["ts"])
+            return
+
         topic = self._identify_topic(channel_id)
         if not topic:
             await say(text="Sorry I am not set up to support a topic in this channel.")
             return
 
         logger.debug(f"Handling mention in topic: {topic.config.name}")
-        
+
+        if command:
+            await self.run_bot_command(command, topic, event, client)
+            return
+
         # Clean the mention from the text
-        bot_user_id = (await client.auth_test())["user_id"]
         clean_text = text.replace(f'<@{bot_user_id}>', '').strip()
         
         # Start a thread and process the query
@@ -444,7 +476,14 @@ class SlackBot:
         bot_user_id = (await client.auth_test())["user_id"]
         if user_id == bot_user_id:
             return
-            
+
+        # Slack delivers both app_mention and message for a message that mentions
+        # the bot, so a command inside a followed thread also arrives here.
+        # handle_mention has already run it; treating it as a question as well
+        # would post a stray answer alongside the command's own reply.
+        if parse_bot_command(text, bot_user_id):
+            return
+
         topic = self._identify_topic(channel_id)
         if not topic:
             return
@@ -484,6 +523,85 @@ class SlackBot:
                 thread_ts,
                 thread_ts
             )
+
+    async def run_bot_command(self, command: str, topic: Topic, event: Dict[str, Any], client: AsyncWebClient):
+        """Run a mention command ("quit", "rescan") on behalf of the outie."""
+        channel_id = event["channel"]
+        # Reply in the mention's own thread. Falling back to the message ts
+        # mirrors handle_mention, which threads a top-level mention under itself.
+        thread_ts = event.get("thread_ts") or event["ts"]
+        outie_id = topic.outie_config.outie_id
+
+        if event.get("user") != outie_id:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=f"`{command}` is only available to the outie (<@{outie_id}>)."
+            )
+            return
+
+        if command == "rescan":
+            await self.rescan(topic, channel_id, event["ts"], thread_ts)
+        elif command == "quit":
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text="Goodbye! Bot shutting down..."
+            )
+            await self.stop()
+
+    async def post_hello(self, channel_id: str, thread_ts: str):
+        """Post the introduction card.
+
+        Open to everyone, as the /hello slash command was -- it reveals nothing
+        about the topic or its documents.
+        """
+        await self.client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=HELLO_FALLBACK_TEXT,
+            blocks=hello_blocks()
+        )
+
+    async def rescan(self, topic: Topic, channel_id: str, message_ts: str, thread_ts: str):
+        """Re-scan and re-vectorize the topic's documents.
+
+        Safe to run on a live bot: scan_and_vectorize() builds a fresh, uniquely
+        named collection and replaces the topic's vector store, so re-running
+        rebuilds the index rather than appending a second copy of every chunk.
+        """
+        logger.info(f"Rescanning documents for topic: {topic.config.name}")
+        await self._set_working(channel_id, message_ts, True)
+        try:
+            await self.client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=await self._rescan_and_describe(topic)
+            )
+        finally:
+            await self._set_working(channel_id, message_ts, False)
+
+    async def _rescan_and_describe(self, topic: Topic) -> str:
+        """Rescan the topic and return what to tell the channel about it.
+
+        Only the scan is guarded. A failure to post the *result* must not be
+        reported as a failed rescan — that would tell the channel the old index is
+        still serving when the new one actually loaded.
+        """
+        try:
+            return f"Rescan complete. {await topic.scan_and_vectorize()}"
+        except Exception:
+            logger.exception(f"Rescan failed for topic {topic.config.name}")
+            # The exception text stays out of the channel: it routinely carries
+            # absolute document paths and provider internals, everyone in the
+            # channel sees it, and it would be posted unescaped, where Slack
+            # control syntax in a message would render as a live mention. Same
+            # reasoning as the startup message counting excluded files without
+            # naming them. The previous index is still serving, though, which the
+            # outie does need to know -- otherwise a failure reads as an emptied
+            # knowledge base.
+            return ("Rescan failed; details are in the bot logs. "
+                    "Still answering from the previously loaded documents.")
 
     async def connect_and_prepare(self, topic: Topic):
         """Connect to channels and prepare documents"""
@@ -549,19 +667,44 @@ class SlackBot:
         # and so needs the event loop to already be running.
         if self.handler is None:
             self.handler = AsyncSocketModeHandler(self.app, self._app_token)
+        self._shutdown = asyncio.Event()
 
-        # Prepare all topics
-        for innie in self.innies:
-            for topic in innie.topics:
-                await self.connect_and_prepare(topic)
+        try:
+            # Prepare all topics
+            for innie in self.innies:
+                for topic in innie.topics:
+                    await self.connect_and_prepare(topic)
 
-        # Start the socket mode handler
-        await self.handler.start_async()
+            # connect_async() + our own wait, not start_async(): start_async() ends
+            # in an infinite sleep that closing the client does not interrupt, so a
+            # quit would disconnect from Slack and then leave the process alive
+            # forever, holding the in-memory index and needing a kill by hand.
+            # Waiting on an event we control means stop() lets start() return and
+            # the process exit.
+            await self.handler.connect_async()
+            logger.info("Bolt app is running! (connected to Slack)")
+            await self._shutdown.wait()
+        finally:
+            # Covers the failure paths too, not just a clean quit. The handler
+            # opens an aiohttp session as soon as it is constructed, so a topic
+            # that fails to prepare would otherwise leave that session open and
+            # log "Unclosed client session".
+            await self.handler.close_async()
+            # Back to the pre-start state. The handler is dropped, not just
+            # closed: its aiohttp session is gone, so a second start() reusing it
+            # would reconnect a dead client instead of building a fresh one.
+            self.handler = None
+            self._shutdown = None
+            logger.info("Slack bot stopped")
 
     async def stop(self):
-        """Stop the bot"""
+        """Stop the bot, releasing start() so the process can exit"""
         logger.info("Stopping Slack bot...")
-        if self.handler is not None:
+        if self._shutdown is not None:
+            self._shutdown.set()
+        elif self.handler is not None:
+            # stop() before start(): nothing is waiting on the event, so close
+            # whatever the handler already opened.
             await self.handler.close_async()
 
     def run(self):
