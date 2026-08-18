@@ -146,6 +146,12 @@ thread ID; subsequent messages in that thread are answered automatically without
 - Users can ask to "please consult outie" to bring in an admin.
 - Admins can summarize a thread ("summary and file" on Discord, `/approve` etc. on Slack) and
   approve the summary to be stored into the knowledge base (`./data/summaries/`).
+- Slack admin (outie) commands are **mentions**, not slash commands — `@bot rescan` re-vectorizes
+  the topic's documents without a restart, `@bot quit` shuts the bot down. A slash command has to
+  be declared in the Slack app config as well as in code, so it cannot ship in the repo alone;
+  `parse_bot_command()` requires the whole message to be the command, so questions that merely
+  contain the word still go to the model. Slack delivers both `app_mention` and `message` for the
+  same text, so `handle_message` deliberately ignores commands that `handle_mention` already ran.
 
 ### Embedding & vector store selection
 
