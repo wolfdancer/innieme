@@ -1,8 +1,9 @@
-from innieme.slack_bot import SlackBot
+from innieme.slack_bot import SlackBot, parse_bot_command
 from innieme.slack_bot_config import SlackBotConfig, OutieConfig, TopicConfig, ChannelConfig
 
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
+import asyncio
 import os
 
 @pytest.fixture
@@ -158,18 +159,52 @@ async def test_start_builds_handler_inside_event_loop(mock_handler, mock_app, mo
     """
     mock_app.return_value = Mock(client=Mock())
     handler_instance = Mock()
-    handler_instance.start_async = AsyncMock()
+    handler_instance.close_async = AsyncMock()
     mock_handler.return_value = handler_instance
 
     bot = SlackBot(mock_config)
     assert bot.handler is None
+
+    # Stop as soon as the connection is up, so start() does not wait forever.
+    handler_instance.connect_async = AsyncMock(side_effect=lambda: bot._shutdown.set())
 
     bot.innies = []  # skip document scanning / channel connection
     await bot.start()
 
     mock_handler.assert_called_once_with(bot.app, "xapp-test-token")
     assert bot.handler is handler_instance
-    handler_instance.start_async.assert_awaited_once()
+    handler_instance.connect_async.assert_awaited_once()
+
+@pytest.mark.asyncio
+@patch('innieme.slack_bot.AsyncApp')
+@patch('innieme.slack_bot.AsyncSocketModeHandler')
+async def test_stop_lets_start_return_so_the_process_exits(mock_handler, mock_app, mock_config):
+    """stop() must end start(), not just disconnect.
+
+    start_async() ends in an infinite sleep, so closing the socket-mode client
+    left the process running after a quit -- disconnected from Slack but alive,
+    and only killable by hand.
+    """
+    mock_app.return_value = Mock(client=Mock())
+    handler_instance = Mock()
+    handler_instance.connect_async = AsyncMock()
+    handler_instance.close_async = AsyncMock()
+    # start_async is what must NOT be used: it never returns.
+    handler_instance.start_async = AsyncMock(side_effect=AssertionError("start_async blocks forever"))
+    mock_handler.return_value = handler_instance
+
+    bot = SlackBot(mock_config)
+    bot.innies = []
+
+    async def quit_after_connect():
+        while bot._shutdown is None:
+            await asyncio.sleep(0)
+        await bot.stop()
+
+    # A timeout here means the shutdown path is broken, which is exactly the bug.
+    await asyncio.wait_for(asyncio.gather(bot.start(), quit_after_connect()), timeout=5)
+
+    handler_instance.close_async.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_stop_before_start_does_not_raise(mock_config):
@@ -464,3 +499,203 @@ async def test_long_response_posts_multiple_messages_not_a_file(mock_config):
         client.files_upload.assert_not_called()
         for call in client.chat_postMessage.await_args_list:
             assert len(call.kwargs["text"]) <= 3900
+
+
+class TestParseBotCommand:
+    """Commands arrive as mentions, so the parser is what separates them from questions."""
+
+    BOT = "U0BOT"
+
+    def test_bare_command_after_mention(self):
+        assert parse_bot_command(f"<@{self.BOT}> rescan", self.BOT) == "rescan"
+        assert parse_bot_command(f"<@{self.BOT}> quit", self.BOT) == "quit"
+
+    def test_case_and_surrounding_whitespace_ignored(self):
+        assert parse_bot_command(f"  <@{self.BOT}>   ReScan  ", self.BOT) == "rescan"
+
+    def test_trailing_punctuation_ignored(self):
+        assert parse_bot_command(f"<@{self.BOT}> quit!", self.BOT) == "quit"
+
+    def test_command_before_the_mention(self):
+        assert parse_bot_command(f"rescan <@{self.BOT}>", self.BOT) == "rescan"
+
+    def test_a_question_that_merely_contains_the_word_is_not_a_command(self):
+        """The whole message has to be the command, or "should we quit?" shuts the bot down."""
+        for text in [
+            f"<@{self.BOT}> should we rescan the notes?",
+            f"<@{self.BOT}> did the rescan pick up Northwind.md",
+            f"<@{self.BOT}> what happens when you quit",
+            f"<@{self.BOT}> quit rescan",
+        ]:
+            assert parse_bot_command(text, self.BOT) is None, text
+
+    def test_unmentioned_message_is_never_a_command(self):
+        assert parse_bot_command("rescan", self.BOT) is None
+        assert parse_bot_command("<@U0SOMEONEELSE> rescan", self.BOT) is None
+
+    def test_empty_text_safe(self):
+        assert parse_bot_command("", self.BOT) is None
+        assert parse_bot_command(None, self.BOT) is None
+
+
+def _command_bot(mock_config, client):
+    with patch('innieme.slack_bot.AsyncApp') as mock_app:
+        mock_app.return_value = Mock(client=client)
+        return SlackBot(mock_config)
+
+
+def _topic(outie_id="U1234567890", name="math"):
+    topic = Mock()
+    topic.config = Mock(name=name)
+    topic.config.name = name
+    topic.outie_config = Mock(outie_id=outie_id)
+    return topic
+
+
+@pytest.mark.asyncio
+async def test_rescan_command_rebuilds_the_index(mock_config):
+    """"@bot rescan" re-vectorizes without a restart and reports the result"""
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    client.reactions_add = AsyncMock()
+    client.reactions_remove = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic()
+    topic.scan_and_vectorize = AsyncMock(return_value="On topic 'math': 12 chunks created")
+    event = {"channel": "C1234567890", "user": "U1234567890", "ts": "111.1"}
+
+    await bot.run_bot_command("rescan", topic, event, client)
+
+    topic.scan_and_vectorize.assert_awaited_once()
+    posted = client.chat_postMessage.await_args_list[-1].kwargs
+    assert "12 chunks created" in posted["text"]
+    assert posted["thread_ts"] == "111.1"
+    # The working indicator goes on the mention itself and is cleared after.
+    client.reactions_add.assert_awaited_once()
+    client.reactions_remove.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_rescan_says_the_old_index_is_still_serving(mock_config):
+    """A failure leaves the previous store in place; the outie needs to know that"""
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    client.reactions_add = AsyncMock()
+    client.reactions_remove = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic()
+    topic.scan_and_vectorize = AsyncMock(side_effect=RuntimeError("embeddings down"))
+    event = {"channel": "C1234567890", "user": "U1234567890", "ts": "111.1"}
+
+    await bot.run_bot_command("rescan", topic, event, client)
+
+    text = client.chat_postMessage.await_args_list[-1].kwargs["text"]
+    assert "embeddings down" in text
+    assert "previously loaded" in text
+    client.reactions_remove.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_commands_are_outie_only(mock_config):
+    """Anyone in the channel can mention the bot, so commands must be gated"""
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic(outie_id="U1234567890")
+    topic.scan_and_vectorize = AsyncMock()
+    bot.stop = AsyncMock()
+    event = {"channel": "C1234567890", "user": "U0INTRUDER", "ts": "111.1"}
+
+    await bot.run_bot_command("rescan", topic, event, client)
+    await bot.run_bot_command("quit", topic, event, client)
+
+    topic.scan_and_vectorize.assert_not_awaited()
+    bot.stop.assert_not_awaited()
+    for call in client.chat_postMessage.await_args_list:
+        assert "only available to the outie" in call.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_quit_command_stops_the_bot(mock_config):
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+    bot.stop = AsyncMock()
+
+    topic = _topic()
+    event = {"channel": "C1234567890", "user": "U1234567890", "ts": "111.1"}
+
+    await bot.run_bot_command("quit", topic, event, client)
+
+    bot.stop.assert_awaited_once()
+    assert "shutting down" in client.chat_postMessage.await_args_list[0].kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_mention_routes_a_command_instead_of_querying_the_model(mock_config):
+    client = Mock()
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic()
+    bot._identify_topic = Mock(return_value=topic)
+    bot.run_bot_command = AsyncMock()
+    bot.process_and_respond = AsyncMock()
+
+    event = {"channel": "C1234567890", "user": "U1234567890",
+             "text": "<@U0BOT> rescan", "ts": "111.1"}
+    await bot.handle_mention(event, AsyncMock(), client)
+
+    bot.run_bot_command.assert_awaited_once()
+    assert bot.run_bot_command.await_args.args[0] == "rescan"
+    bot.process_and_respond.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_command_in_a_followed_thread_is_not_also_answered_as_a_question(mock_config):
+    """Slack sends app_mention *and* message for the same text.
+
+    handle_mention runs the command; if handle_message also treated it as a
+    query the thread would get a stray answer next to the command's reply.
+    """
+    client = Mock()
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic()
+    topic.is_following_thread = Mock(return_value=True)
+    bot._identify_topic = Mock(return_value=topic)
+    bot.process_and_respond = AsyncMock()
+
+    event = {"channel": "C1234567890", "user": "U1234567890", "text": "<@U0BOT> rescan",
+             "ts": "222.2", "thread_ts": "111.1"}
+    await bot.handle_message(event, AsyncMock(), client)
+
+    bot.process_and_respond.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_mention_still_reaches_the_model(mock_config):
+    """The command path must not swallow real questions"""
+    client = Mock()
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic()
+    bot._identify_topic = Mock(return_value=topic)
+    bot.run_bot_command = AsyncMock()
+    bot.process_and_respond = AsyncMock()
+
+    event = {"channel": "C1234567890", "user": "U1234567890",
+             "text": "<@U0BOT> should we rescan the Northwind notes?", "ts": "111.1"}
+    await bot.handle_mention(event, AsyncMock(), client)
+
+    bot.run_bot_command.assert_not_awaited()
+    bot.process_and_respond.assert_awaited_once()
+    assert bot.process_and_respond.await_args.args[2] == "should we rescan the Northwind notes?"
+
