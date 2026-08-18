@@ -1,4 +1,7 @@
-from innieme.discord_bot_config import OutieConfig, DiscordBotConfig
+from innieme.discord_bot_config import (
+    OutieConfig, DiscordBotConfig, TopicConfig, ChannelConfig,
+)
+from pydantic import ValidationError
 
 import pytest
 
@@ -85,3 +88,60 @@ def test_config_from_yaml():
     # Verify second outie
     assert config.outies[1].outie_id == 2
     assert config.outies[1].topics[0].name == "innieme"
+
+
+class TestDiscordRetrievalAndExclusionConfig:
+    """Mirrors the Slack config tests so the two platforms cannot drift."""
+
+    def _base(self, **overrides):
+        base = dict(
+            discord_token="t",
+            embeddings_api_key="k",
+            llm_api_key="k",
+            embedding_model="fake",
+            outies=[],
+        )
+        base.update(overrides)
+        return base
+
+    def test_defaults(self):
+        c = DiscordBotConfig(**self._base())
+        assert c.retrieval_top_k == 5
+        assert c.retrieval_score_threshold is None
+        assert c.embeddings_model_name is None
+        assert c.cache_dir is None
+
+    def test_retrieval_top_k_must_be_positive(self):
+        for bad in (0, -1):
+            with pytest.raises(ValidationError):
+                DiscordBotConfig(**self._base(retrieval_top_k=bad))
+
+    def test_retrieval_score_threshold_must_be_a_fraction(self):
+        for bad in (1.5, -0.1, float("nan")):
+            with pytest.raises(ValidationError):
+                DiscordBotConfig(**self._base(retrieval_score_threshold=bad))
+
+    def test_valid_retrieval_bounds_are_accepted(self):
+        for good in (0.0, 0.5, 1.0):
+            c = DiscordBotConfig(**self._base(retrieval_score_threshold=good))
+            assert c.retrieval_score_threshold == good
+
+    def test_bot_level_docs_exclude_raises_rather_than_being_ignored(self):
+        """Misplacing it must fail loudly, not parse and silently do nothing"""
+        with pytest.raises(ValidationError) as exc_info:
+            DiscordBotConfig(**self._base(docs_exclude=["CLAUDE.md"]))
+        assert "per-topic setting" in str(exc_info.value)
+
+    def test_docs_exclude_is_per_topic(self, tmp_path):
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        topic = TopicConfig(
+            name="t", role="r", docs_dir=str(docs),
+            docs_exclude=["CLAUDE.md"],
+            channels=[ChannelConfig(guild_id=1, channel_id=2)],
+        )
+        assert topic.docs_exclude == ["CLAUDE.md"]
+        assert TopicConfig(
+            name="t2", role="r", docs_dir=str(docs),
+            channels=[ChannelConfig(guild_id=1, channel_id=3)],
+        ).docs_exclude is None

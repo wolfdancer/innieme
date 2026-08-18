@@ -219,7 +219,10 @@ class TestDocsExclude:
         response = await p.scan_and_vectorize()
 
         assert "1 out of 1 references" in response
-        assert "excluded: CLAUDE.md" in response
+        # Count only -- the channel-facing message must not name excluded files,
+        # since a file is often excluded precisely to keep it from those readers.
+        assert "1 file excluded" in response
+        assert "CLAUDE.md" not in response
 
         results = await p.search_documents("next action", top_k=10)
         sources = {os.path.basename(d.metadata["source"]) for d in results}

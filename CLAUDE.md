@@ -164,7 +164,11 @@ backend raises an `ImportError` until it is installed separately.
 ### Response length limits
 
 - Discord: 2000 chars — overflow sent as a `response.txt` file attachment.
-- Slack: 4000 chars — overflow uploaded via `files_upload`.
+- Slack: `SLACK_MESSAGE_LIMIT` (3900 chars) — overflow is split across sequential thread
+  messages by `slack_bot.split_for_slack()`, which prefers paragraph then line boundaries and
+  closes/reopens a code fence that spans parts. Slack itself recommends staying under 4,000
+  chars and truncates at 40,000. The old `files_upload` path is gone: that endpoint was retired
+  in March 2025, and a downloadable file reads worse than messages for a summary.
 
 ## Configuration
 

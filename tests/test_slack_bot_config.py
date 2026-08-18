@@ -1,3 +1,4 @@
+from pydantic import ValidationError
 from innieme.slack_bot_config import OutieConfig, SlackBotConfig
 
 import pytest
@@ -225,6 +226,58 @@ outies:
     config = SlackBotConfig.from_yaml(yaml_content)
     assert config.outies[0].topics[0].docs_exclude is None
 
-def test_bot_level_docs_exclude_is_rejected_as_unknown():
-    """Exclusions are topic-level; a stray bot-level key should not be silently ignored"""
-    assert "docs_exclude" not in SlackBotConfig.model_fields
+def test_bot_level_docs_exclude_raises_rather_than_being_ignored(tmp_path):
+    """A misplaced docs_exclude must fail loudly.
+
+    Pydantic ignores unknown top-level keys by default, so without an explicit
+    guard this config would load fine and silently ingest the file it names.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    yaml_content = f"""
+slack_bot_token: "xoxb-test-token"
+slack_app_token: "xapp-test-token"
+embeddings_api_key: "k"
+llm_api_key: "k"
+embedding_model: "fake"
+docs_exclude:
+  - "CLAUDE.md"
+outies:
+  - outie_id: "U1"
+    topics:
+      - name: "t"
+        role: "r"
+        docs_dir: "{docs}"
+        channels:
+          - channel_id: "C1"
+"""
+    with pytest.raises(ValidationError) as exc_info:
+        SlackBotConfig.from_yaml(yaml_content)
+    assert "per-topic setting" in str(exc_info.value)
+
+def test_retrieval_top_k_must_be_positive():
+    """k <= 0 reaches the vector store and fails at query time, not startup"""
+    for bad in (0, -1):
+        with pytest.raises(ValidationError):
+            SlackBotConfig(
+                slack_bot_token="xoxb-t", slack_app_token="xapp-t",
+                embeddings_api_key="k", llm_api_key="k",
+                embedding_model="fake", retrieval_top_k=bad, outies=[])
+
+def test_retrieval_score_threshold_must_be_a_fraction():
+    """Out of range or NaN silently drops every chunk"""
+    for bad in (1.5, -0.1, float("nan")):
+        with pytest.raises(ValidationError):
+            SlackBotConfig(
+                slack_bot_token="xoxb-t", slack_app_token="xapp-t",
+                embeddings_api_key="k", llm_api_key="k",
+                embedding_model="fake", retrieval_score_threshold=bad, outies=[])
+
+def test_valid_retrieval_bounds_are_accepted():
+    """The edges of the documented range stay legal"""
+    for good in (0.0, 0.5, 1.0):
+        c = SlackBotConfig(
+            slack_bot_token="xoxb-t", slack_app_token="xapp-t",
+            embeddings_api_key="k", llm_api_key="k",
+            embedding_model="fake", retrieval_score_threshold=good, outies=[])
+        assert c.retrieval_score_threshold == good

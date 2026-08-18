@@ -215,6 +215,74 @@ class TestMarkdownToMrkdwn:
     def test_links_use_slack_angle_syntax(self):
         from innieme.slack_bot import markdown_to_mrkdwn
         assert markdown_to_mrkdwn("[docs](https://x.com/a)") == "<https://x.com/a|docs>"
+        assert markdown_to_mrkdwn("[mail](mailto:a@b.co)") == "<mailto:a@b.co|mail>"
+
+    def test_control_syntax_targets_are_not_converted(self):
+        """Slack's link brackets are also its control syntax.
+
+        Link targets reach this function from document text by way of the model,
+        so they are untrusted. Converting [all](!here) would emit <!here>, an
+        actual channel-wide ping; (@U123) and (#C123) become real user and
+        channel references. Unsafe targets stay literal markdown, which Slack
+        renders harmlessly.
+        """
+        from innieme.slack_bot import markdown_to_mrkdwn
+        for src in ("[all](!here)", "[everyone](!channel)",
+                    "[someone](@U012ABC)", "[somewhere](#C012ABC)",
+                    "[js](javascript:alert(1))", "[rel](/etc/passwd)"):
+            out = markdown_to_mrkdwn(src)
+            assert out == src, f"{src!r} was converted to {out!r}"
+            assert not out.startswith("<"), f"{src!r} produced control syntax"
+
+    def test_link_label_cannot_break_out_of_the_brackets(self):
+        """A label must not be able to close the link's angle brackets.
+
+        `>` survives as the escaped `&gt;` (Slack displays it as `>`), while `|`
+        is dropped because it separates target from label and is not escaped.
+        """
+        from innieme.slack_bot import markdown_to_mrkdwn
+        out = markdown_to_mrkdwn("[a>b|c](https://x.co)")
+        assert out == "<https://x.co|a&gt;bc>"
+
+    def test_raw_control_syntax_in_text_is_neutralised(self):
+        """Slack reads <!here> as a live ping wherever it appears.
+
+        The text comes from documents by way of the model, so a note containing
+        <!channel> must not make the bot ping everyone.
+        """
+        from innieme.slack_bot import markdown_to_mrkdwn
+        for raw, dead in [
+            ("<!here>", "&lt;!here&gt;"),
+            ("<!channel>", "&lt;!channel&gt;"),
+            ("<@U012ABC>", "&lt;@U012ABC&gt;"),
+            ("<#C012ABC>", "&lt;#C012ABC&gt;"),
+        ]:
+            out = markdown_to_mrkdwn(f"see {raw} now")
+            assert out == f"see {dead} now"
+            assert raw not in out
+
+    def test_bracketed_control_target_cannot_survive_a_rejected_link(self):
+        """A rejected link is returned literally, so its text must be inert too"""
+        from innieme.slack_bot import markdown_to_mrkdwn
+        out = markdown_to_mrkdwn("[all](<!here>)")
+        assert "<!here>" not in out
+        assert "&lt;!here&gt;" in out
+
+    def test_control_syntax_inside_code_is_also_neutralised(self):
+        """Slack interprets mentions inside code spans too"""
+        from innieme.slack_bot import markdown_to_mrkdwn
+        out = markdown_to_mrkdwn("run `echo <!here>`")
+        assert "<!here>" not in out
+        assert "&lt;!here&gt;" in out
+
+    def test_ampersand_escaped_once(self):
+        from innieme.slack_bot import markdown_to_mrkdwn
+        assert markdown_to_mrkdwn("a & b") == "a &amp; b"
+
+    def test_url_containing_delimiters_is_left_literal(self):
+        from innieme.slack_bot import markdown_to_mrkdwn
+        src = "[x](https://x.co/a|b)"
+        assert markdown_to_mrkdwn(src) == src
 
     def test_strikethrough_single_tilde(self):
         from innieme.slack_bot import markdown_to_mrkdwn
@@ -300,6 +368,19 @@ class TestSplitForSlack:
         from innieme.slack_bot import split_for_slack
         assert split_for_slack("") == [""]
 
+    def test_oversized_code_block_reopens_fence_each_part(self):
+        """A code block bigger than one message stays code in every part"""
+        from innieme.slack_bot import split_for_slack
+        text = "intro\n\n```\n" + "\n".join(f"line {i}" for i in range(60)) + "\n```\n\noutro"
+        parts = split_for_slack(text, limit=120)
+        assert len(parts) > 2
+        for part in parts:
+            assert part.count("```") % 2 == 0, f"unbalanced: {part[:40]!r}"
+        # every line of the code block survives somewhere
+        for i in range(60):
+            assert any(f"line {i}\n" in p or p.endswith(f"line {i}") or f"line {i}\n```" in p
+                       for p in parts), f"lost line {i}"
+
 
 @pytest.mark.asyncio
 async def test_working_reaction_added_then_removed(mock_config):
@@ -383,16 +464,3 @@ async def test_long_response_posts_multiple_messages_not_a_file(mock_config):
         client.files_upload.assert_not_called()
         for call in client.chat_postMessage.await_args_list:
             assert len(call.kwargs["text"]) <= 3900
-
-    def test_oversized_code_block_reopens_fence_each_part(self):
-        """A code block bigger than one message stays code in every part"""
-        from innieme.slack_bot import split_for_slack
-        text = "intro\n\n```\n" + "\n".join(f"line {i}" for i in range(60)) + "\n```\n\noutro"
-        parts = split_for_slack(text, limit=120)
-        assert len(parts) > 2
-        for part in parts:
-            assert part.count("```") % 2 == 0, f"unbalanced: {part[:40]!r}"
-        # every line of the code block survives somewhere
-        for i in range(60):
-            assert any(f"line {i}\n" in p or p.endswith(f"line {i}") or f"line {i}\n```" in p
-                       for p in parts), f"lost line {i}"

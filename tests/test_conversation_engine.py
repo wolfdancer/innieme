@@ -136,3 +136,55 @@ def test_openai_embeddings_factory_honours_override():
     assert OpenAIEmbeddingsFactory("k", model_name="text-embedding-3-large").model_name == (
         "text-embedding-3-large"
     )
+
+@pytest.mark.asyncio
+async def test_engine_passes_retrieval_settings_through():
+    """Configured retrieval settings must actually reach search_documents"""
+    from unittest.mock import AsyncMock, Mock, patch
+    from innieme.conversation_engine import ConversationEngine
+
+    topic = Mock()
+    topic.outie.outie_id = "U1"
+    topic.outie.bot.retrieval_top_k = 12
+    topic.outie.bot.retrieval_score_threshold = 0.42
+    topic.role = "r"
+
+    processor = Mock()
+    processor.search_documents = AsyncMock(return_value=[])
+
+    with patch("innieme.conversation_engine.Agent"):
+        engine = ConversationEngine(topic, processor, Mock())
+    engine._generate_response = AsyncMock(return_value="ok")
+
+    await engine.process_query("q", context_messages=[{"role": "user", "content": "q"}])
+
+    processor.search_documents.assert_awaited_once_with(
+        "q", top_k=12, score_threshold=0.42
+    )
+
+@pytest.mark.asyncio
+async def test_engine_falls_back_to_defaults_for_older_configs():
+    """A config predating these fields still works"""
+    from unittest.mock import AsyncMock, Mock, patch
+    from innieme.conversation_engine import ConversationEngine
+
+    class Bare:
+        pass
+
+    topic = Mock()
+    topic.outie.outie_id = "U1"
+    topic.outie.bot = Bare()   # no retrieval attributes at all
+    topic.role = "r"
+
+    processor = Mock()
+    processor.search_documents = AsyncMock(return_value=[])
+
+    with patch("innieme.conversation_engine.Agent"):
+        engine = ConversationEngine(topic, processor, Mock())
+    engine._generate_response = AsyncMock(return_value="ok")
+
+    await engine.process_query("q", context_messages=[{"role": "user", "content": "q"}])
+
+    processor.search_documents.assert_awaited_once_with(
+        "q", top_k=5, score_threshold=None
+    )

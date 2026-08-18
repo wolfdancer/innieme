@@ -69,7 +69,7 @@ Common fields (both platforms):
 | `embeddings_api_key` | — | API key for the embedding model (required for `openai`) |
 | `llm_model` | `openai:gpt-5.6-terra` | PydanticAI model string, e.g. `"openai:gpt-5.6-terra"` or `"anthropic:claude-sonnet-5"` |
 | `llm_api_key` | — | API key for the LLM provider |
-| `cache_dir` | `<docs_dir>/.cache` | Where downloaded embedding models are cached. Only used by the `huggingface` backend; supports `~` |
+| `cache_dir` | `<docs_dir>/.cache/langchain` | Where downloaded embedding models are cached. Only used by the `huggingface` backend; supports `~` |
 | `retrieval_top_k` | `5` | Maximum document chunks sent to the model as context per query |
 | `retrieval_score_threshold` | unset | Optional relevance floor (0–1). Drops weak matches instead of padding context out to `retrieval_top_k` |
 | `outies` | — | List of admins, each with one or more `topics` |
@@ -114,8 +114,9 @@ directions to follow, so rules written for one task ("always produce a next acti
 guess") can override the answering prompt's rules ("never invent a next step"). Set `docs_exclude`
 to `[]` to scan everything.
 
-Excluded files are named in the startup message and the logs, so a document missing from the
-knowledge base is never a silent mystery.
+The startup message reports how many files were excluded, and the logs name each one. The count
+goes to the channel but the names do not: a file is often excluded precisely because the people
+in that channel should not know about it, while whoever configured the bot can read the logs.
 
 Platform-specific fields:
 

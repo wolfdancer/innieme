@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 _CODE_PLACEHOLDER = "\x00CODE{}\x00"
 _BOLD_OPEN = "\x01"
 _BOLD_CLOSE = "\x02"
+_LINK_OPEN = "\x03"
+_LINK_CLOSE = "\x04"
 
 _CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
 # Space/tab only, never \n: a \s* here would swallow the blank line that
@@ -25,6 +27,12 @@ _CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
 _HEADING_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(.*?)[ \t]*#*[ \t]*$", re.MULTILINE)
 _BULLET_RE = re.compile(r"^(\s*)[-*+][ \t]+", re.MULTILINE)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+# Only these schemes become Slack links. Slack's <...> syntax is also its
+# control syntax: an unfiltered [all](!here) would render as <!here> and ping
+# the channel, and (@U123) / (#C123) become real user and channel references.
+# Document text reaches this function by way of the model, so a link target is
+# untrusted input.
+_SAFE_LINK_SCHEME_RE = re.compile(r"^(?:https?://|mailto:)", re.IGNORECASE)
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.DOTALL)
 _ITALIC_RE = re.compile(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", re.DOTALL)
 _STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
@@ -89,6 +97,38 @@ def split_for_slack(text: str, limit: int = SLACK_MESSAGE_LIMIT) -> List[str]:
     return parts
 
 
+def _escape_slack(text: str) -> str:
+    """Neutralise Slack's control syntax in untrusted text.
+
+    Slack reads <!here>, <!channel>, <@U123> and <#C123> as live mentions, and
+    this text originates in documents by way of the model. Escaping is
+    display-transparent — Slack renders &lt; back as < — so the reader sees the
+    original characters while the control sequences are inert.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _slack_link(match: "re.Match[str]") -> str:
+    """Render one markdown link, or leave it literal if the target is unsafe.
+
+    Slack delimits links with the same angle brackets it uses for control
+    sequences, so only known-safe schemes are converted. Anything else is left
+    as plain markdown text, which Slack renders harmlessly.
+    """
+    label, url = match.group(1), match.group(2)
+    if not _SAFE_LINK_SCHEME_RE.match(url):
+        # Left as-is, which is safe because the text was already escaped:
+        # any angle brackets in it are inert &lt;/&gt; by this point.
+        return match.group(0)
+    if "|" in url:
+        return match.group(0)
+    # "|" separates target from label and is not escaped, so it must go.
+    label = label.replace("|", "")
+    # Sentinels, converted to real brackets at the very end — otherwise the
+    # escaping pass would neutralise the link we are deliberately creating.
+    return f"{_LINK_OPEN}{url}|{label}{_LINK_CLOSE}"
+
+
 def markdown_to_mrkdwn(text: str) -> str:
     """Translate standard markdown into Slack's mrkdwn dialect.
 
@@ -113,12 +153,16 @@ def markdown_to_mrkdwn(text: str) -> str:
         return _CODE_PLACEHOLDER.format(len(code_spans) - 1)
 
     text = _CODE_SPAN_RE.sub(_stash, text)
+    # Escape before any conversion, so nothing downstream can reintroduce live
+    # control syntax. Links we create ourselves use sentinels and are restored
+    # after this point.
+    text = _escape_slack(text)
 
     # Headings have no equivalent; bold is the closest visual stand-in.
     text = _HEADING_RE.sub(lambda m: f"{_BOLD_OPEN}{m.group(1)}{_BOLD_CLOSE}", text)
     # Bullets before emphasis, so a leading "* " is not mistaken for italic.
     text = _BULLET_RE.sub(r"\1• ", text)
-    text = _LINK_RE.sub(r"<\2|\1>", text)
+    text = _LINK_RE.sub(_slack_link, text)
     text = _STRIKE_RE.sub(r"~\1~", text)
     # Bold goes to sentinels so the italic pass below cannot re-match it.
     text = _BOLD_RE.sub(
@@ -126,9 +170,12 @@ def markdown_to_mrkdwn(text: str) -> str:
     )
     text = _ITALIC_RE.sub(r"_\1_", text)
     text = text.replace(_BOLD_OPEN, "*").replace(_BOLD_CLOSE, "*")
+    text = text.replace(_LINK_OPEN, "<").replace(_LINK_CLOSE, ">")
 
+    # Code spans were stashed before escaping, so escape them now — Slack
+    # interprets control syntax inside code too, and &lt; still displays as <.
     for index, span in enumerate(code_spans):
-        text = text.replace(_CODE_PLACEHOLDER.format(index), span)
+        text = text.replace(_CODE_PLACEHOLDER.format(index), _escape_slack(span))
     return text
 
 
@@ -408,13 +455,13 @@ class SlackBot:
         if user_id == outie_id and "summary and file" in text.lower():
             if thread_ts:
                 summary = await topic.generate_summary(thread_ts)
-                await client.chat_postMessage(
-                    channel=channel_id,
-                    text=(
-                        f"Summary generated:\n\n{markdown_to_mrkdwn(summary)}\n\n"
-                        "Approve to add to knowledge base? (use `/approve`)"
-                    ),
-                    thread_ts=thread_ts
+                # Through _post_response so a long summary is split rather than
+                # exceeding the message limit.
+                await self._post_response(
+                    channel_id,
+                    f"Summary generated:\n\n{summary}\n\n"
+                    "Approve to add to knowledge base? (use `/approve`)",
+                    thread_ts,
                 )
             return
         

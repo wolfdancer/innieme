@@ -1,3 +1,4 @@
+import math
 import os, yaml
 from typing import List, Optional
 
@@ -42,6 +43,18 @@ class OutieConfig(BaseModel):
             raise ValueError('Outie ID cannot be empty')
         return v
     
+    @model_validator(mode='before')
+    @classmethod
+    def reject_misplaced_docs_exclude(cls, data):
+        # Unknown keys are ignored at every level, so an outie-level
+        # docs_exclude would load cleanly and exclude nothing.
+        if isinstance(data, dict) and 'docs_exclude' in data:
+            raise ValueError(
+                'docs_exclude is a per-topic setting. Move it under the topic '
+                "entry, alongside that topic's docs_dir."
+            )
+        return data
+
     @model_validator(mode='after')
     def set_back_references(self):
         for topic in self.topics:
@@ -80,6 +93,43 @@ class SlackBotConfig(BaseModel):
     def app_token_must_not_be_empty(cls, v):
         if not v:
             raise ValueError('Slack app token cannot be empty')
+        return v
+
+    @model_validator(mode='before')
+    @classmethod
+    def reject_misplaced_docs_exclude(cls, data):
+        # Pydantic ignores unknown top-level keys, so a docs_exclude left here
+        # would parse cleanly and silently do nothing -- the excluded file
+        # would be ingested anyway with no error to explain why.
+        if isinstance(data, dict) and 'docs_exclude' in data:
+            raise ValueError(
+                'docs_exclude is a per-topic setting, not a bot-level one. '
+                'Move it under the topic entry, alongside that topic\'s docs_dir.'
+            )
+        return data
+
+    @field_validator('retrieval_top_k')
+    def top_k_must_be_positive(cls, v):
+        # Reaches the vector store as `k`; a non-positive value fails at query
+        # time, so the bot would start fine and then break on the first
+        # question. Catch it at load.
+        if v < 1:
+            raise ValueError(f'retrieval_top_k must be at least 1, got {v}')
+        return v
+
+    @field_validator('retrieval_score_threshold')
+    def threshold_must_be_a_fraction(cls, v):
+        # Out-of-range or NaN silently drops every chunk, so the bot answers
+        # "not in the documents" for everything -- the worst failure mode
+        # because it looks like a knowledge-base problem, not a config error.
+        if v is None:
+            return v
+        if math.isnan(v):
+            raise ValueError('retrieval_score_threshold must be a number, got NaN')
+        if not 0 <= v <= 1:
+            raise ValueError(
+                f'retrieval_score_threshold must be between 0 and 1, got {v}'
+            )
         return v
 
     @field_validator('embedding_model')

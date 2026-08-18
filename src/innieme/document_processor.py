@@ -133,10 +133,12 @@ class DocumentProcessor:
             )
             response = f"On topic '{self.topic}': {len(all_chunks)} chunks created from {count} out of {len(files)} references"
         if excluded:
-            # Surface exclusions in the channel too, so the set of ingested
-            # documents is never a mystery to whoever asks the bot a question.
-            names = ", ".join(sorted(os.path.basename(f) for f in excluded))
-            response += f" (excluded: {names})"
+            # Count only, never names: the channel-facing message is visible to
+            # everyone, and a file is often excluded precisely because those
+            # readers should not know about it. The names are in the logs, which
+            # is where whoever configured the bot will look.
+            plural = "s" if len(excluded) != 1 else ""
+            response += f" ({len(excluded)} file{plural} excluded; see logs)"
         return response
     
     async def _extract_text(self, file_path):
