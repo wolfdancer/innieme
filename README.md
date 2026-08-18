@@ -140,6 +140,32 @@ innieme discord -c custom_config.yaml
 Logging is controlled by environment variables: `LOG_LEVEL` (global, default `INFO`) and
 `INNIEME_LOG_LEVEL` (this package, default `INFO`).
 
+### Slack commands
+
+Ask a question by mentioning the bot, or by replying in a thread it is already following. The
+bot also understands three commands, given the same way:
+
+| Command | Who can use it | What it does |
+| --- | --- | --- |
+| `@bot hello` | anyone | Posts the introduction card. Works in any channel, even one with no topic configured, so it doubles as an "is this thing running?" check. |
+| `@bot rescan` | the topic's outie | Re-reads and re-vectorizes the topic's `docs_dir`. Use it after editing your documents — there is no need to restart. If the scan fails, the previous index keeps serving answers. |
+| `@bot quit` | the topic's outie | Shuts the bot down, process included. |
+
+The whole message has to be the command, so `@bot rescan` runs a rescan while `@bot should we
+rescan the notes?` is answered as a question.
+
+These are **mentions, not slash commands**, deliberately: a slash command must be declared in
+your Slack app's configuration as well as in the code, so it cannot work on a fresh install
+without extra setup, whereas a mention works as soon as the bot is running.
+
+`/approve` (approve a generated summary into the knowledge base) is the one remaining slash
+command, so it does need declaring under **Features → Slash Commands** in your Slack app to be
+reachable.
+
+> **Upgrading:** `/quit` and `/hello` used to be slash commands and are now the mentions above.
+> If you declared either in your Slack app configuration, delete it there — otherwise Slack keeps
+> offering a command the bot no longer handles.
+
 ### Docker
 
 ```bash
