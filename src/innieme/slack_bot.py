@@ -7,18 +7,141 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 import logging
 import asyncio
+import re
 from collections import defaultdict
 from typing import Optional, List, Dict, Any
-import io
 
 logger = logging.getLogger(__name__)
 
-class SlackBot:    
+# Placeholders used while converting markdown; chosen so they cannot appear in
+# model output.
+_CODE_PLACEHOLDER = "\x00CODE{}\x00"
+_BOLD_OPEN = "\x01"
+_BOLD_CLOSE = "\x02"
+
+_CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+# Space/tab only, never \n: a \s* here would swallow the blank line that
+# follows a heading and collapse the paragraph break.
+_HEADING_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(.*?)[ \t]*#*[ \t]*$", re.MULTILINE)
+_BULLET_RE = re.compile(r"^(\s*)[-*+][ \t]+", re.MULTILINE)
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.DOTALL)
+_ITALIC_RE = re.compile(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", re.DOTALL)
+_STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
+
+
+# Emoji shown on the message being worked on. No colons — the API wants the bare name.
+WORKING_REACTION = "thinking_face"
+
+# Slack recommends keeping a message under 4,000 characters and truncates at
+# 40,000. Sit a little under the recommendation for headroom.
+SLACK_MESSAGE_LIMIT = 3900
+
+
+def split_for_slack(text: str, limit: int = SLACK_MESSAGE_LIMIT) -> List[str]:
+    """Split a long response into messages Slack will render well.
+
+    Prefers paragraph breaks, then line breaks, then a hard cut, so parts stay
+    readable. A message longer than the limit still posts (Slack only truncates
+    at 40,000) but reads poorly, and splitting beats uploading a file the reader
+    would have to download.
+    """
+    if not text:
+        return [text] if text == "" else []
+    if len(text) <= limit:
+        return [text]
+
+    fence = "```"
+    parts: List[str] = []
+    remaining = text
+    # Whether the next part begins inside an open code fence. A code block
+    # longer than the limit cannot be kept in one message, so the fence is
+    # closed at the end of a part and reopened at the start of the next —
+    # otherwise the trailing part renders as plain text.
+    inside_fence = False
+
+    while remaining:
+        prefix = f"{fence}\n" if inside_fence else ""
+        # Reserve room for the prefix and a possible closing fence.
+        budget = max(limit - len(prefix) - len(fence) - 1, 1)
+
+        if len(remaining) <= budget:
+            content, remaining = remaining, ""
+        else:
+            window = remaining[:budget]
+            cut = window.rfind("\n\n")
+            if cut <= 0:
+                cut = window.rfind("\n")
+            if cut <= 0:
+                cut = window.rfind(" ")
+            if cut <= 0:
+                cut = len(window)
+            content = remaining[:cut]
+            remaining = remaining[cut:].lstrip("\n")
+
+        content = content.rstrip()
+        # An odd number of fences in this part flips the open/closed state.
+        ends_inside = inside_fence != (content.count(fence) % 2 == 1)
+        suffix = f"\n{fence}" if ends_inside else ""
+        parts.append(prefix + content + suffix)
+        inside_fence = ends_inside
+
+    return parts
+
+
+def markdown_to_mrkdwn(text: str) -> str:
+    """Translate standard markdown into Slack's mrkdwn dialect.
+
+    Slack does not render standard markdown. It uses ``*single asterisks*`` for
+    bold and ``_underscores_`` for italic (the opposite emphasis convention from
+    markdown), has no heading syntax, and has no list syntax -- bullets must be
+    literal characters. Posting raw markdown therefore shows the punctuation
+    verbatim, and ``*italic*`` comes out bold, which inverts the author's intent.
+
+    The LLM emits ordinary markdown so the same response can serve Discord,
+    which does read ``**bold**``; each platform adapter translates for itself.
+    Content inside code spans and fenced blocks is left untouched.
+    """
+    if not text:
+        return text
+
+    # Pull code out first so its contents are never rewritten.
+    code_spans: List[str] = []
+
+    def _stash(match: "re.Match[str]") -> str:
+        code_spans.append(match.group(0))
+        return _CODE_PLACEHOLDER.format(len(code_spans) - 1)
+
+    text = _CODE_SPAN_RE.sub(_stash, text)
+
+    # Headings have no equivalent; bold is the closest visual stand-in.
+    text = _HEADING_RE.sub(lambda m: f"{_BOLD_OPEN}{m.group(1)}{_BOLD_CLOSE}", text)
+    # Bullets before emphasis, so a leading "* " is not mistaken for italic.
+    text = _BULLET_RE.sub(r"\1• ", text)
+    text = _LINK_RE.sub(r"<\2|\1>", text)
+    text = _STRIKE_RE.sub(r"~\1~", text)
+    # Bold goes to sentinels so the italic pass below cannot re-match it.
+    text = _BOLD_RE.sub(
+        lambda m: f"{_BOLD_OPEN}{m.group(1) or m.group(2)}{_BOLD_CLOSE}", text
+    )
+    text = _ITALIC_RE.sub(r"_\1_", text)
+    text = text.replace(_BOLD_OPEN, "*").replace(_BOLD_CLOSE, "*")
+
+    for index, span in enumerate(code_spans):
+        text = text.replace(_CODE_PLACEHOLDER.format(index), span)
+    return text
+
+
+class SlackBot:
     def __init__(self, config: SlackBotConfig):
         # Bot setup
         self.app = AsyncApp(token=config.slack_bot_token)
-        self.handler = AsyncSocketModeHandler(self.app, config.slack_app_token)
         self.client = self.app.client
+        # AsyncSocketModeHandler builds an aiohttp.ClientSession, which requires a
+        # *running* event loop. __init__ is called synchronously before
+        # asyncio.run(), so the handler is created in start() instead.
+        self._app_token = config.slack_app_token
+        self.handler: Optional[AsyncSocketModeHandler] = None
 
         # Innies setup        
         self.innies = [Innie(outie_config) for outie_config in config.outies]
@@ -172,6 +295,41 @@ class SlackBot:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
+    async def _set_working(self, channel_id: str, timestamp: str, working: bool):
+        """Show or clear the "working on it" reaction on a message.
+
+        Preferred over posting a "Thinking..." message, which stays in the thread
+        forever and gets tiresome. Reacting to the thread's parent also means the
+        signal is visible in the channel without opening the thread.
+
+        Needs the ``reactions:write`` scope. A bot missing it should still answer,
+        so failures here are logged and swallowed.
+        """
+        if not timestamp:
+            return
+        action = self.client.reactions_add if working else self.client.reactions_remove
+        try:
+            await action(
+                channel=channel_id, name=WORKING_REACTION, timestamp=timestamp
+            )
+        except Exception as e:
+            # already_reacted / no_reaction are normal races, not problems.
+            logger.debug(f"Could not {'add' if working else 'remove'} reaction: {e}")
+
+    async def _post_response(self, channel_id: str, response: str, thread_ts: str = None):
+        """Post a response, split across messages when it is too long for one.
+
+        Slack recommends keeping a message under 4,000 characters (it truncates
+        at 40,000). Splitting keeps a long summary readable in the thread —
+        better than uploading it as a file the reader has to download to see.
+        """
+        for part in split_for_slack(markdown_to_mrkdwn(response)):
+            await self.client.chat_postMessage(
+                channel=channel_id,
+                text=part,
+                thread_ts=thread_ts
+            )
+
     async def process_and_respond(self, topic: Topic, channel_id: str, query: str, thread_id: str, thread_ts: str = None):
         """Process a query and respond in the channel"""
         context_messages = []
@@ -179,35 +337,14 @@ class SlackBot:
             context_messages = await self.get_thread_context(channel_id, thread_ts)
         else:
             context_messages = [{"role": "user", "content": query}]
-        
+
         try:
-            # Add typing indicator
-            await self.client.chat_postMessage(
-                channel=channel_id,
-                text="🤔 Thinking...",
-                thread_ts=thread_ts
-            )
-            
+            await self._set_working(channel_id, thread_ts, True)
+
             response = await topic.process_query(thread_id, query, context_messages=context_messages)
-            
-            # Delete thinking message and send response
-            if len(response) > 4000:  # Slack has a 4000 character limit for messages
-                # Upload as a file
-                await self.client.files_upload(
-                    channels=channel_id,
-                    content=response,
-                    filename="response.txt",
-                    title="Response (too long for message)",
-                    thread_ts=thread_ts
-                )
-            else:
-                # Send as normal message
-                await self.client.chat_postMessage(
-                    channel=channel_id,
-                    text=response,
-                    thread_ts=thread_ts
-                )
-                
+
+            await self._post_response(channel_id, response, thread_ts)
+
         except Exception as e:
             error_message = f"Sorry, I encountered an error while processing your request: {str(e)}"
             await self.client.chat_postMessage(
@@ -216,6 +353,10 @@ class SlackBot:
                 thread_ts=thread_ts
             )
             raise  # Re-raise the exception for logging/debugging
+        finally:
+            # Clear the indicator whether the answer succeeded or failed, so a
+            # failure never leaves the thread looking like it is still working.
+            await self._set_working(channel_id, thread_ts, False)
 
     async def handle_mention(self, event: Dict[str, Any], say, client: AsyncWebClient):
         """Handle app mentions"""
@@ -269,7 +410,10 @@ class SlackBot:
                 summary = await topic.generate_summary(thread_ts)
                 await client.chat_postMessage(
                     channel=channel_id,
-                    text=f"Summary generated:\n\n{summary}\n\nApprove to add to knowledge base? (use `/approve`)",
+                    text=(
+                        f"Summary generated:\n\n{markdown_to_mrkdwn(summary)}\n\n"
+                        "Approve to add to knowledge base? (use `/approve`)"
+                    ),
                     thread_ts=thread_ts
                 )
             return
@@ -353,19 +497,25 @@ class SlackBot:
     async def start(self):
         """Start the bot"""
         logger.info("Starting Slack bot...")
-        
+
+        # Created here, not in __init__: the handler opens an aiohttp session
+        # and so needs the event loop to already be running.
+        if self.handler is None:
+            self.handler = AsyncSocketModeHandler(self.app, self._app_token)
+
         # Prepare all topics
         for innie in self.innies:
             for topic in innie.topics:
                 await self.connect_and_prepare(topic)
-        
+
         # Start the socket mode handler
         await self.handler.start_async()
 
     async def stop(self):
         """Stop the bot"""
         logger.info("Stopping Slack bot...")
-        await self.handler.close_async()
+        if self.handler is not None:
+            await self.handler.close_async()
 
     def run(self):
         """Run the bot (blocking)"""
