@@ -547,15 +547,21 @@ class SlackBot:
                 thread_ts=thread_ts,
                 text=f"Rescan complete. {result}"
             )
-        except Exception as e:
+        except Exception:
             logger.exception(f"Rescan failed for topic {topic.config.name}")
-            # The previous index is still in place on failure, so the bot keeps
-            # answering from the documents it had; say so rather than leaving the
-            # outie unsure whether the knowledge base is now empty.
+            # The exception text stays out of the channel: it routinely carries
+            # absolute document paths and provider internals, everyone in the
+            # channel sees it, and it would be posted unescaped, where Slack
+            # control syntax in a message would render as a live mention. Same
+            # reasoning as the startup message counting excluded files without
+            # naming them. The previous index is still serving, though, which the
+            # outie does need to know -- otherwise a failure reads as an emptied
+            # knowledge base.
             await self.client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
-                text=f"Rescan failed: {e}\nStill answering from the previously loaded documents."
+                text="Rescan failed; details are in the bot logs. "
+                     "Still answering from the previously loaded documents."
             )
         finally:
             await self._set_working(channel_id, message_ts, False)
@@ -626,23 +632,31 @@ class SlackBot:
             self.handler = AsyncSocketModeHandler(self.app, self._app_token)
         self._shutdown = asyncio.Event()
 
-        # Prepare all topics
-        for innie in self.innies:
-            for topic in innie.topics:
-                await self.connect_and_prepare(topic)
-
-        # connect_async() + our own wait, not start_async(): start_async() ends in
-        # an infinite sleep that closing the client does not interrupt, so a quit
-        # would disconnect from Slack and then leave the process alive forever,
-        # holding the in-memory index and needing a kill by hand. Waiting on an
-        # event we control means stop() lets start() return and the process exit.
-        await self.handler.connect_async()
-        logger.info("Bolt app is running! (connected to Slack)")
         try:
+            # Prepare all topics
+            for innie in self.innies:
+                for topic in innie.topics:
+                    await self.connect_and_prepare(topic)
+
+            # connect_async() + our own wait, not start_async(): start_async() ends
+            # in an infinite sleep that closing the client does not interrupt, so a
+            # quit would disconnect from Slack and then leave the process alive
+            # forever, holding the in-memory index and needing a kill by hand.
+            # Waiting on an event we control means stop() lets start() return and
+            # the process exit.
+            await self.handler.connect_async()
+            logger.info("Bolt app is running! (connected to Slack)")
             await self._shutdown.wait()
         finally:
+            # Covers the failure paths too, not just a clean quit. The handler
+            # opens an aiohttp session as soon as it is constructed, so a topic
+            # that fails to prepare would otherwise leave that session open and
+            # log "Unclosed client session".
             await self.handler.close_async()
-        logger.info("Slack bot stopped")
+            # Back to the pre-start state: a stop() after this point closes the
+            # handler directly instead of setting an event nothing waits on.
+            self._shutdown = None
+            logger.info("Slack bot stopped")
 
     async def stop(self):
         """Stop the bot, releasing start() so the process can exit"""

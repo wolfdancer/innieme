@@ -207,6 +207,56 @@ async def test_stop_lets_start_return_so_the_process_exits(mock_handler, mock_ap
     handler_instance.close_async.assert_awaited_once()
 
 @pytest.mark.asyncio
+@patch('innieme.slack_bot.AsyncApp')
+@patch('innieme.slack_bot.AsyncSocketModeHandler')
+async def test_failed_startup_closes_the_handler(mock_handler, mock_app, mock_config):
+    """A topic that fails to prepare must not leak the handler's aiohttp session.
+
+    The handler opens the session when it is constructed, before any topic work,
+    so an exception on the way to the wait would otherwise leave it open and log
+    "Unclosed client session".
+    """
+    mock_app.return_value = Mock(client=Mock())
+    handler_instance = Mock()
+    handler_instance.connect_async = AsyncMock()
+    handler_instance.close_async = AsyncMock()
+    mock_handler.return_value = handler_instance
+
+    bot = SlackBot(mock_config)
+    bot.connect_and_prepare = AsyncMock(side_effect=RuntimeError("embeddings down"))
+
+    with pytest.raises(RuntimeError):
+        await bot.start()
+
+    handler_instance.close_async.assert_awaited_once()
+    handler_instance.connect_async.assert_not_awaited()
+    # Reset, so a later stop() closes the handler instead of setting an event
+    # that nothing is waiting on.
+    assert bot._shutdown is None
+
+
+@pytest.mark.asyncio
+@patch('innieme.slack_bot.AsyncApp')
+@patch('innieme.slack_bot.AsyncSocketModeHandler')
+async def test_stop_after_start_returns_still_closes_the_handler(mock_handler, mock_app, mock_config):
+    """stop() after a completed run falls back to closing the handler directly"""
+    mock_app.return_value = Mock(client=Mock())
+    handler_instance = Mock()
+    handler_instance.close_async = AsyncMock()
+    mock_handler.return_value = handler_instance
+
+    bot = SlackBot(mock_config)
+    handler_instance.connect_async = AsyncMock(side_effect=lambda: bot._shutdown.set())
+    bot.innies = []
+    await bot.start()
+
+    handler_instance.close_async.reset_mock()
+    await bot.stop()
+
+    handler_instance.close_async.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_stop_before_start_does_not_raise(mock_config):
     """Stopping a bot that was never started is a no-op, not an AttributeError"""
     with patch('innieme.slack_bot.AsyncApp') as mock_app:
@@ -592,7 +642,9 @@ async def test_failed_rescan_says_the_old_index_is_still_serving(mock_config):
     await bot.run_bot_command("rescan", topic, event, client)
 
     text = client.chat_postMessage.await_args_list[-1].kwargs["text"]
-    assert "embeddings down" in text
+    # The exception text is for the logs, not the channel: it carries absolute
+    # paths and provider internals, and would be posted unescaped.
+    assert "embeddings down" not in text
     assert "previously loaded" in text
     client.reactions_remove.assert_awaited_once()
 
