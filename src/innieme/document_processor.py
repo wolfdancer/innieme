@@ -91,7 +91,10 @@ class DocumentProcessor:
         files = [f for f in found if not self._is_excluded(f)]
         excluded = [f for f in found if self._is_excluded(f)]
 
-        logger.info(f"For {self.topic}: Found {len(files)} documents to process under {self.docs_dir}...")
+        logger.info(
+            f"For {self.topic}: Found {len(found)}, excluded {len(excluded)}, "
+            f"processing {len(files)} under {self.docs_dir}..."
+        )
         # Log exclusions explicitly: a file silently missing from the knowledge
         # base is much harder to diagnose than one reported as skipped.
         for file_path in excluded:
