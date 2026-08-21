@@ -1,4 +1,4 @@
-from innieme.slack_bot import SlackBot, parse_bot_command, hello_blocks
+from innieme.slack_bot import SlackBot, parse_bot_command, authored_text, hello_blocks
 from innieme.slack_bot_config import SlackBotConfig, OutieConfig, TopicConfig, ChannelConfig
 
 import pytest
@@ -82,6 +82,28 @@ def test_identify_topic(mock_config):
         # Test non-existing channel
         topic = bot._identify_topic("C0000000000")
         assert topic is None
+
+@pytest.mark.asyncio
+async def test_get_thread_context_drops_integration_attribution(mock_config):
+    """History feeds the model, so an earlier message's trailer must not ride along."""
+    with patch('innieme.slack_bot.AsyncApp'), \
+         patch('innieme.slack_bot.AsyncSocketModeHandler'):
+        bot = SlackBot(mock_config)
+        bot.client = AsyncMock()
+        bot.client.conversations_replies.return_value = {
+            "messages": [{
+                "user": "U1234567890",
+                "text": "what is the latest on Northwind *Sent using* <@U0CLAUDE>",
+                "blocks": [{"type": "context", "elements": [
+                    {"type": "mrkdwn", "text": "*Sent using* <@U0CLAUDE>"}]}],
+            }]
+        }
+        bot.client.auth_test.return_value = {"user_id": "UBOT123456"}
+
+        context = await bot.get_thread_context("C1234567890", "1234567890.123456")
+
+        assert context[0]["content"] == "what is the latest on Northwind"
+
 
 @pytest.mark.asyncio
 async def test_get_thread_context(mock_config):
@@ -607,6 +629,16 @@ class TestParseBotCommand:
         ]:
             assert parse_bot_command(text, self.BOT) is None, text
 
+    def test_a_message_mentioning_someone_else_is_not_a_command(self):
+        """"@bot quit @alice" is addressed to a person, not a bare command."""
+        for text in [
+            f"<@{self.BOT}> quit <@U0ALICE>",
+            f"<@{self.BOT}> quit <@U0ALICE|alice>",
+            f"<@{self.BOT}> rescan <@U0ALICE|alice>",
+            f"<@U0ALICE> <@{self.BOT}> rescan <@U0BOB>",
+        ]:
+            assert parse_bot_command(text, self.BOT) is None, text
+
     def test_unmentioned_message_is_never_a_command(self):
         assert parse_bot_command("rescan", self.BOT) is None
         assert parse_bot_command("<@U0SOMEONEELSE> rescan", self.BOT) is None
@@ -614,6 +646,162 @@ class TestParseBotCommand:
     def test_empty_text_safe(self):
         assert parse_bot_command("", self.BOT) is None
         assert parse_bot_command(None, self.BOT) is None
+
+    def test_labelled_mention_form_is_recognised(self):
+        """Slack markup allows "<@U123|name>" as well as the bare form."""
+        assert parse_bot_command(f"<@{self.BOT}|innieme> rescan", self.BOT) == "rescan"
+        assert parse_bot_command(f"rescan <@{self.BOT}|innieme>", self.BOT) == "rescan"
+
+    def test_labelled_mention_of_someone_else_is_not_a_command(self):
+        assert parse_bot_command("<@U0SOMEONEELSE|dave> rescan", self.BOT) is None
+
+
+def _context_block(text):
+    """An integration's attribution block, as the Claude Slack app sends it."""
+    return {"type": "context", "block_id": "yvYdJ",
+            "elements": [{"type": "mrkdwn", "text": text, "verbatim": False}]}
+
+
+class TestAuthoredText:
+    """Not every word in a message's text was typed by the person who sent it."""
+
+    BOT = "U0BOT"
+    CLAUDE = "U0CLAUDE"
+
+    def test_integration_attribution_is_removed(self):
+        """The Claude Slack app appends "*Sent using* @Claude" as a context block.
+
+        Slack's flattened "text" glues that onto the sender's own words with a
+        space, so "@InnieMe rescan" arrives as "@InnieMe rescan *Sent using*
+        @Claude" and stops looking like a bare command -- it was answered as a
+        question instead of being run. This is the payload Slack actually
+        delivered for such a message.
+        """
+        event = {
+            "text": f"<@{self.BOT}> rescan *Sent using* <@{self.CLAUDE}>",
+            "blocks": [
+                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
+                    {"type": "user", "user_id": self.BOT},
+                    {"type": "text", "text": " rescan"}]}]},
+                _context_block(f"*Sent using* <@{self.CLAUDE}>"),
+            ],
+        }
+        assert authored_text(event) == f"<@{self.BOT}> rescan"
+        assert parse_bot_command(authored_text(event), self.BOT) == "rescan"
+
+    def test_typed_message_is_unchanged(self):
+        event = {"text": f"<@{self.BOT}> rescan", "blocks": [
+            {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
+                {"type": "user", "user_id": self.BOT},
+                {"type": "text", "text": " rescan"}]}]}]}
+        assert authored_text(event) == f"<@{self.BOT}> rescan"
+
+    def test_no_blocks_leaves_text_alone(self):
+        """A plain chat.postMessage carries no blocks; text is all there is."""
+        assert authored_text({"text": f"<@{self.BOT}> rescan"}) == f"<@{self.BOT}> rescan"
+        assert authored_text({"text": "", "blocks": []}) == ""
+        assert authored_text({}) == ""
+
+    def test_trailer_that_does_not_match_the_end_is_left_alone(self):
+        """Only an exact suffix is removed; anything else keeps the old behaviour."""
+        event = {"text": f"<@{self.BOT}> rescan",
+                 "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+        assert authored_text(event) == f"<@{self.BOT}> rescan"
+
+    def test_attribution_only_message_yields_nothing(self):
+        event = {"text": f"*Sent using* <@{self.CLAUDE}>",
+                 "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+        assert authored_text(event) == ""
+        assert parse_bot_command(authored_text(event), self.BOT) is None
+
+    def test_markup_is_preserved_so_a_link_is_not_a_command(self):
+        """A link labelled "quit" must not become the command "quit".
+
+        Slack renders a link as "<url|label>" in the text. Rebuilding the text
+        from the rich-text blocks would emit the label alone, handing a
+        side-effecting command to anyone who posts a hyperlink.
+        """
+        event = {
+            "text": f"<@{self.BOT}> <https://example.com|quit>",
+            "blocks": [
+                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
+                    {"type": "user", "user_id": self.BOT},
+                    {"type": "text", "text": " "},
+                    {"type": "link", "url": "https://example.com", "text": "quit"}]}]},
+                _context_block(f"*Sent using* <@{self.CLAUDE}>"),
+            ],
+        }
+        assert authored_text(event) == f"<@{self.BOT}> <https://example.com|quit>"
+        assert parse_bot_command(authored_text(event), self.BOT) is None
+
+    def test_code_and_quote_markup_is_preserved(self):
+        """Code-formatted or quoted text keeps its markup, so it is not a command."""
+        for text in [f"<@{self.BOT}> `quit`", f"<@{self.BOT}> &gt; quit"]:
+            event = {"text": f"{text} *Sent using* <@{self.CLAUDE}>",
+                     "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+            assert authored_text(event) == text
+            assert parse_bot_command(authored_text(event), self.BOT) is None, text
+
+    def test_several_attribution_trailers_are_all_removed(self):
+        """Stripping front to back would leave the earlier trailer behind."""
+        event = {
+            "text": f"<@{self.BOT}> rescan *Sent using* <@{self.CLAUDE}> "
+                    f"*Sent using* <@U0OTHERAPP>",
+            "blocks": [
+                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
+                    {"type": "user", "user_id": self.BOT},
+                    {"type": "text", "text": " rescan"}]}]},
+                _context_block(f"*Sent using* <@{self.CLAUDE}>"),
+                _context_block("*Sent using* <@U0OTHERAPP>"),
+            ],
+        }
+        assert authored_text(event) == f"<@{self.BOT}> rescan"
+        assert parse_bot_command(authored_text(event), self.BOT) == "rescan"
+
+    def test_walk_stops_at_an_authored_block(self):
+        """A context block that is not trailing belongs to the message."""
+        event = {
+            "text": f"*heads up* <@{self.BOT}> rescan",
+            "blocks": [
+                _context_block("*heads up*"),
+                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
+                    {"type": "user", "user_id": self.BOT},
+                    {"type": "text", "text": " rescan"}]}]},
+            ],
+        }
+        assert authored_text(event) == f"*heads up* <@{self.BOT}> rescan"
+
+    def test_padded_attribution_text_is_still_matched(self):
+        """The block's element may carry padding the flattened text does not."""
+        event = {
+            "text": f"<@{self.BOT}> rescan *Sent using* <@{self.CLAUDE}>",
+            "blocks": [_context_block(f"  *Sent using* <@{self.CLAUDE}>\n")],
+        }
+        assert authored_text(event) == f"<@{self.BOT}> rescan"
+        assert parse_bot_command(authored_text(event), self.BOT) == "rescan"
+
+    def test_arbitrary_context_text_cannot_create_a_command(self):
+        """Only an attribution-shaped trailer is removed.
+
+        "context" is a generic Block Kit type, so an app may put real content
+        there. Removing it on block type alone would turn "@bot quit please?"
+        into the command "quit" and shut the bot down.
+        """
+        for trailing, whole in [
+            ("please?", f"<@{self.BOT}> quit please?"),
+            ("or not?", f"<@{self.BOT}> rescan or not?"),
+            ("the Dell notes", f"<@{self.BOT}> rescan the Dell notes"),
+        ]:
+            event = {"text": whole, "blocks": [_context_block(trailing)]}
+            assert authored_text(event) == whole, trailing
+            assert parse_bot_command(authored_text(event), self.BOT) is None, trailing
+
+    def test_question_keeps_its_words(self):
+        event = {"text": f"<@{self.BOT}> what is the latest on Northwind "
+                         f"*Sent using* <@{self.CLAUDE}>",
+                 "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+        assert authored_text(event) == f"<@{self.BOT}> what is the latest on Northwind"
+        assert parse_bot_command(authored_text(event), self.BOT) is None
 
 
 def _command_bot(mock_config, client):

@@ -50,13 +50,86 @@ WORKING_REACTION = "thinking_face"
 # /hello slash command it replaces.
 BOT_COMMANDS = frozenset({"quit", "rescan", "hello"})
 
-_ANY_MENTION_RE = re.compile(r"<@[UWB][A-Z0-9]*>")
+# Both mention forms Slack markup allows: the bare "<@U123>" and the labelled
+# "<@U123|name>". The ID is captured so the same pattern answers "was the bot
+# mentioned?" and "strip the mentions".
+_ANY_MENTION_RE = re.compile(r"<@([UWB][A-Z0-9]*)(?:\|[^>]*)?>")
+
+# An integration posts its attribution as a trailing "context" block -- the
+# Claude Slack app adds "*Sent using* @Claude" -- and the event's flattened
+# "text" glues that onto the sender's own words with a *space*, so
+# "@InnieMe rescan" arrives as "@InnieMe rescan *Sent using* @Claude" and stops
+# being a bare command, which demoted it to a question the model then answered.
+_NON_AUTHORED_BLOCK_TYPES = frozenset({"context"})
+
+# The attribution must look like an attribution, not merely sit in a context
+# block: "context" is a generic Block Kit type, so an app is free to put real
+# content there. Matching a shape rather than a block type keeps the failure
+# safe. Too strict and an integration's command goes unrecognised, which is the
+# bug this fixes and no worse than it; too loose and trailing words are removed
+# from a message that was never a command -- "@InnieMe quit please?" would
+# become "@InnieMe quit" and shut the bot down. A new integration's wording
+# belongs here as another alternative.
+_ATTRIBUTION_TRAILER_RE = re.compile(
+    r"\*Sent using\*\s*<@[UWB][A-Z0-9]*(?:\|[^>]*)?>"
+)
+
+
+def _attribution_text(block: Dict[str, Any]) -> str:
+    """The attribution a block contributes to the flattened ``text``, if any.
+
+    Empty for a block that is not an attribution, which leaves the text alone.
+    """
+    if block.get("type") not in _NON_AUTHORED_BLOCK_TYPES:
+        return ""
+    elements = block.get("elements") or []
+    text = " ".join(
+        element.get("text", "")
+        for element in elements
+        if element.get("type") in ("mrkdwn", "plain_text") and element.get("text")
+    )
+    # Stripped, because that is the form the flattened "text" carries: whatever
+    # padding the block's own element has around it is not in the message text,
+    # so returning it unstripped would fail the suffix match.
+    text = text.strip()
+    return text if _ATTRIBUTION_TRAILER_RE.fullmatch(text) else ""
+
+
+def authored_text(event: Dict[str, Any]) -> str:
+    """The message's text with any non-authored trailer removed.
+
+    ``event["text"]`` stays the source of truth -- it is what Slack itself
+    produced, markup and all. Rebuilding the text from the rich-text blocks
+    instead would be lossy in a way that matters here: a link renders as its
+    label, so "<https://example.com|quit>" would come out as a bare "quit" and
+    run a command the sender never typed. The blocks are used only to learn what
+    the trailer *says*, so the exact suffix can be removed and nothing else
+    changes. A trailer that does not match the end of the text is left alone,
+    which keeps the previous behaviour rather than guessing.
+    """
+    text = event.get("text") or ""
+    # Back to front: with several trailers the last one has to come off before
+    # the one before it is at the end of the text to be found. Anything that is
+    # not an attribution ends the walk -- it and everything earlier is part of
+    # the message.
+    for block in reversed(event.get("blocks") or []):
+        trailer = _attribution_text(block)
+        if not trailer or not text.rstrip().endswith(trailer):
+            break
+        text = text.rstrip()[: -len(trailer)]
+    return text.strip()
+
 
 # Trailing punctuation someone may type without meaning anything by it. Stripped
 # from the end only: ":quit:" is an emoji and ".quit" is not an instruction, so
 # treating either as the command would hand a shutdown to a stray keystroke. "?"
 # is deliberately absent — "@InnieMe quit?" is a question about quitting.
 _COMMAND_TRAILING_PUNCTUATION = "!.,;:"
+
+
+def _strip_bot_mention(text: str, bot_user_id: str) -> str:
+    """``text`` without mentions of the bot itself, in either mention form."""
+    return re.sub(rf"<@{re.escape(bot_user_id)}(?:\|[^>]*)?>", "", text)
 
 
 def parse_bot_command(text: str, bot_user_id: str) -> Optional[str]:
@@ -68,9 +141,12 @@ def parse_bot_command(text: str, bot_user_id: str) -> Optional[str]:
     mention of the word into a shutdown, which is worth guarding against even
     though only the outie can trigger one.
     """
-    if not text or f"<@{bot_user_id}>" not in text:
+    if not text or bot_user_id not in _ANY_MENTION_RE.findall(text):
         return None
-    remainder = _ANY_MENTION_RE.sub(" ", text)
+    # Only the bot's own mention comes out. Stripping everyone's would let
+    # "@InnieMe quit @alice" reduce to "quit": a message that mentions someone
+    # else is addressed to a person, not a bare command.
+    remainder = _strip_bot_mention(text, bot_user_id)
     word = remainder.strip().rstrip(_COMMAND_TRAILING_PUNCTUATION).strip().lower()
     return word if word in BOT_COMMANDS else None
 
@@ -336,9 +412,12 @@ class SlackBot:
             for message in result["messages"]:
                 if "text" in message:
                     role = "assistant" if message["user"] == bot_user_id else "user"
+                    # Same normalisation as a live event: an earlier message sent
+                    # through an integration would otherwise carry its "*Sent
+                    # using* @Claude" trailer into the conversation history.
                     messages.append({
                         "role": role,
-                        "content": message["text"]
+                        "content": authored_text(message)
                     })
             
             return messages
@@ -424,14 +503,13 @@ class SlackBot:
         """Handle app mentions"""
         channel_id = event["channel"]
         user_id = event["user"]
-        text = event["text"]
         ts = event["ts"]
-        
+
         bot_user_id = (await client.auth_test())["user_id"]
 
         # Commands are handled here rather than in handle_message because
         # app_mention fires for every mention, in a channel or inside a thread.
-        command = parse_bot_command(text, bot_user_id)
+        command = parse_bot_command(authored_text(event), bot_user_id)
 
         # Ahead of the topic check, because "hello" is how someone checks the bot
         # is alive -- including in a channel nobody has configured a topic for,
@@ -452,8 +530,10 @@ class SlackBot:
             await self.run_bot_command(command, topic, event, client)
             return
 
-        # Clean the mention from the text
-        clean_text = text.replace(f'<@{bot_user_id}>', '').strip()
+        # Clean the bot's own mention out of the question, in either mention
+        # form, and drop any integration trailer with it: neither is part of what
+        # was asked. Other people's mentions stay -- they are often the subject.
+        clean_text = _strip_bot_mention(authored_text(event), bot_user_id).strip()
         
         # Start a thread and process the query
         await self.process_and_respond(
@@ -468,7 +548,10 @@ class SlackBot:
         """Handle direct messages and thread replies"""
         channel_id = event["channel"]
         user_id = event["user"]
-        text = event["text"]
+        # An integration trailer is not part of what was asked, here as much as
+        # in handle_mention: a thread reply sent through one would otherwise put
+        # "*Sent using* @Claude" into the model's query.
+        text = authored_text(event)
         ts = event["ts"]
         thread_ts = event.get("thread_ts")
         
