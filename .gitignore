@@ -189,3 +189,10 @@ data/
 
 # Claude Code per-developer local settings (shared .claude/ tooling is tracked)
 .claude/settings.local.json
+
+# Claude Code per-developer worktrees (created under .claude/worktrees/).
+# Anchored so only the repo-root directory matches.
+/.claude/worktrees/
+
+# macOS filesystem cruft
+.DS_Store
