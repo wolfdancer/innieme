@@ -20,6 +20,8 @@ Record `BASELINE="$(git rev-parse HEAD)"`. All diffing below is against this fix
 
 Also note whether `$ARGUMENTS` is (or includes) `--staged` — that scope needs an extra step each round (below), because it reviews `git diff --cached`, i.e. the index. If your fixes aren't re-staged, the next round's review sees the pre-fix snapshot again, not your fix — this bit us once already.
 
+For `--staged`, also check once now, before any fix exists, that no staged file has unstaged edits (`git diff --quiet -- <file>` for each file in `git diff --cached --name-only`). If one does, stop and tell me, because re-staging that whole file later with `git add` would pull unrelated hunks into the review. This check belongs here, not in the loop: once step 4 has applied fixes, the files just fixed always have unstaged edits.
+
 ## Loop (up to 3 rounds)
 
 For round N = 1, 2, 3:
@@ -31,7 +33,7 @@ For round N = 1, 2, 3:
 2. Read that review file. If `VERDICT: APPROVED`, stop the loop — nothing left to fix. (If no round changed anything, there is no `round-N.diff`; say so in the report instead of pointing at one.)
 3. Otherwise, evaluate every BLOCKING finding: CONFIRMED (real, matches CLAUDE.md and any OpenSpec spec) or DISAGREE (false positive) — record which and why for the final summary.
 4. Apply fixes for every CONFIRMED finding immediately, without asking me first. Never apply a DISAGREE finding or any NON-BLOCKING finding — collect NON-BLOCKING findings into a running list across rounds instead, for me to decide on at the end.
-5. **If scope is `--staged`**: first check that no scope file has unstaged edits beyond what was staged before the loop (`git diff --quiet -- <file>` on round 1); if one does, stop and tell me, because `git add` of the whole file would pull unrelated hunks into the review. Otherwise re-stage the fix, `git add -- <scope files>`, before moving on — otherwise the next round's review won't see it (see above).
+5. **If scope is `--staged`**: re-stage the fix, `git add -- <scope files>`, before moving on — otherwise the next round's review won't see it (see above). The pre-loop check already ruled out unrelated unstaged hunks.
 6. Save the cumulative diff to `.codex-review/round-N.diff` via `git diff "$BASELINE" -- <scope files>` — this shows everything changed since the loop started regardless of staged/unstaged state, so it stays correct across rounds even for `--staged` scope. Plain `git diff` never shows untracked files, even when named explicitly: for any scope file still untracked, append its full content with `git diff --no-index -- /dev/null <file>` (a clean unified diff for a new file) instead, so round-N.diff doesn't silently omit new files the loop reviewed and fixed.
 7. If this was round 3, stop the loop regardless of remaining findings.
 
