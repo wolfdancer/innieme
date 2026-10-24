@@ -196,3 +196,6 @@ data/
 
 # macOS filesystem cruft
 .DS_Store
+
+# Review-loop ledgers (dev-review-loop skill)
+.review-loop/
