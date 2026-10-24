@@ -15,38 +15,38 @@ Requires Python >= 3.13 (see `pyproject.toml`).
 
 ```bash
 # Install (runtime + dev)
-pip install -e .
-pip install -r requirements.txt -r requirements-dev.txt
+uv sync            # creates .venv from uv.lock (runtime + dev group)
 
 # Run a bot via the unified CLI (-c overrides the default config path)
-innieme discord                       # default: discord_config.yaml
-innieme discord -c custom_config.yaml
-innieme slack                         # default: slack_config.yaml
+uv run innieme discord                # default: discord_config.yaml
+uv run innieme discord -c custom_config.yaml
+uv run innieme slack                  # default: slack_config.yaml
 
 # Legacy / dedicated entry points
-innieme_bot          # Discord (== innieme.cli.run_bot:main)
-innieme_slack_bot    # Slack   (== innieme.cli.run_slack_bot:main)
+uv run innieme_bot       # Discord (== innieme.cli.run_bot:main)
+uv run innieme_slack_bot # Slack   (== innieme.cli.run_slack_bot:main)
 
 # Tests
-pytest                                         # all
-pytest tests/test_slack_bot.py                 # one file
-pytest tests/test_slack_bot.py::test_name      # one test
-pytest --cov=src/innieme                       # with coverage
+uv run pytest                                  # all
+uv run pytest tests/test_slack_bot.py          # one file
+uv run pytest tests/test_slack_bot.py::test_name   # one test
+uv run pytest --cov=src/innieme                # with coverage
 
 # Code quality (CI runs flake8 against the whole repo — see below)
-black src/ tests/
-isort src/ tests/
-flake8 . --select=E9,F63,F7,F82 --show-source --statistics            # hard-fail pass
-flake8 . --exit-zero --max-complexity=10 --max-line-length=127 --statistics   # advisory
+uv run black src/ tests/
+uv run isort src/ tests/
+uv run flake8 . --select=E9,F63,F7,F82 --show-source --statistics            # hard-fail pass
+uv run flake8 . --exit-zero --max-complexity=10 --max-line-length=127 --statistics   # advisory
 ```
 
-Dependency sources: `requirements.in` / `requirements-dev.in` are the pinned inputs;
-`requirements.txt` / `requirements-dev.txt` are the compiled lockfiles that CI installs.
+Dependencies are declared in `pyproject.toml` (`dependencies` + the `dev` dependency group) and
+locked in `uv.lock`, which is committed. Add one with `uv add <pkg>` (`--dev` for dev tools); never
+hand-edit the lockfile. Commands below are shown with `uv run` (or activate `.venv` and drop it).
 
 ### Continuous Integration
-`.github/workflows/python-app.yml` runs on push/PR to `main`: installs `requirements.txt`
-+ `requirements-dev.txt` + `pip install -e .`, runs the two flake8 passes above (only the
-first can fail the build), then `pytest`.
+`.github/workflows/python-app.yml` runs on push/PR to `main`: runs `uv sync --locked`
+(fails if `uv.lock` is stale), runs the two flake8 passes above (only the
+first can fail the build), then `uv run pytest`.
 
 ## Architecture
 
@@ -173,8 +173,10 @@ cosine is the right metric for text embeddings, and Chroma's default squared-L2 
 normalized relevance scores that can go negative, which makes `retrieval_score_threshold`
 meaningless. Do not drop `COLLECTION_METADATA` without also revisiting the threshold logic.
 
-Note `huggingface` needs `sentence-transformers`, which is **not** in `requirements.txt` — that
-backend raises an `ImportError` until it is installed separately.
+Note `huggingface` needs `sentence-transformers`, which is **not** in `pyproject.toml` — that
+backend raises an `ImportError` until it is added with `uv add sentence-transformers`. Installing
+it with `pip`/`uv pip` does not stick: the next `uv run` or `uv sync` removes anything the
+lockfile doesn't list.
 
 ### Response length limits
 
