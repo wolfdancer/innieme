@@ -30,7 +30,7 @@ your docs and keep each interaction in its own thread.
 
 ## Prerequisites
 
-- Python **3.13+**
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (installs Python 3.13+ for you if needed)
 - A bot for your platform (Discord bot token, or Slack bot + app tokens) and the IDs of the
   server/channel(s) it should watch
 - An API key for your chosen LLM provider (and for embeddings, if using OpenAI embeddings)
@@ -45,7 +45,7 @@ git clone https://github.com/wolfdancer/innieme.git
 cd innieme
 
 # create .venv and install the package with its dependencies (uses uv.lock)
-uv sync --no-dev
+uv sync
 ```
 
 ## Configuration
@@ -125,13 +125,13 @@ Place the documents you want the bot to learn from in the `docs_dir` configured 
 
 ## Running
 
-Use the unified CLI and pick a platform. It loads the config from the current working directory
+Use the unified CLI and pick a platform (prefix with `uv run`, or activate `.venv`). It loads the config from the current working directory
 by default (run from the project root), or pass `-c` to point elsewhere:
 
 ```bash
-innieme discord                       # uses ./discord_config.yaml
-innieme slack                         # uses ./slack_config.yaml
-innieme discord -c custom_config.yaml
+uv run innieme discord                # uses ./discord_config.yaml
+uv run innieme slack                  # uses ./slack_config.yaml
+uv run innieme discord -c custom_config.yaml
 ```
 
 Logging is controlled by environment variables: `LOG_LEVEL` (global, default `INFO`) and
@@ -142,7 +142,7 @@ Logging is controlled by environment variables: `LOG_LEVEL` (global, default `IN
 End to end, from a fresh clone to a bot answering in a channel:
 
 ```bash
-uv sync --no-dev
+uv sync
 cp slack_config.example.yaml slack_config.yaml
 ```
 
@@ -228,12 +228,12 @@ docker run -v "$(pwd)/slack_config.yaml:/app/slack_config.yaml" -v "$(pwd)/data:
 uv sync
 
 # run the test suite
-pytest
+uv run pytest
 
 # format, sort imports, and lint
-black src/ tests/
-isort src/ tests/
-flake8 .
+uv run black src/ tests/
+uv run isort src/ tests/
+uv run flake8 .
 ```
 
 ## License
