@@ -4,15 +4,15 @@ description: Run a scoped Codex review of the current changes (or a path), auto-
 disable-model-invocation: true
 ---
 
-Run the scoped Codex reviewer (it needs the `codex` CLI on PATH, plus GNU `timeout` (macOS: `brew install coreutils`); neither ships with this repo) and automatically resolve BLOCKING findings yourself, looping review→fix with Codex until clean or a 3-round cap — then show me exactly what changed and anything left for me to decide. You have the project context (CLAUDE.md, and any OpenSpec change in play); push back on (don't apply) a finding you disagree with, but don't ask before applying one you've confirmed — that per-finding confirmation step is gone by design.
+Run the scoped Codex reviewer (it needs the `codex` CLI on PATH, plus GNU `timeout` or `gtimeout` (macOS: `brew install coreutils`); neither ships with this repo) and automatically resolve BLOCKING findings yourself, looping review→fix with Codex until clean or a 3-round cap — then show me exactly what changed and anything left for me to decide. You have the project context (CLAUDE.md, and any OpenSpec change in play); push back on (don't apply) a finding you disagree with, but don't ask before applying one you've confirmed — that per-finding confirmation step is gone by design.
 
 **Scope comes from `$ARGUMENTS`** (pass them straight through to the script, and reused unchanged on every round):
 
 - (no args) — review my uncommitted working changes, tracked edits and new untracked files alike. This is the fast default.
 - `<path> [path...]` — review the current content of those files/dirs against their specs (or CLAUDE.md when no spec covers them).
 - `--staged` — only staged changes (pre-commit check).
-- `--branch` — the whole branch vs `main` (slow; only when I ask for a full pre-PR pass).
-- `--range A..B` / `--commit <sha>` — a commit range or single commit.
+- `--branch` — the whole branch vs `main` (slow; only when I ask for a full pre-PR pass). It diffs against the working tree, so fixes the loop makes between rounds are seen by the next round.
+- `--range A..B` / `--commit <sha>` — a commit range or single commit. These review committed snapshots, so later rounds can't see uncommitted fixes: after round 1's fixes, stop and tell me, rather than re-reviewing the same bugs.
 
 ## Before the loop
 

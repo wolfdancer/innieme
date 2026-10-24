@@ -65,9 +65,12 @@ case "$mode" in
     ;;
   branch)
     MB="$(git merge-base "$BASE_BRANCH" HEAD)"
-    SCOPE_DESC="branch changes vs $BASE_BRANCH (merge-base ${MB:0:9}...HEAD)"
+    # Diff the merge-base against the WORKING TREE, not HEAD, so fixes made
+    # between review rounds (uncommitted) are visible to the next round.
+    SCOPE_DESC="branch changes vs $BASE_BRANCH, including uncommitted fixes (git diff ${MB:0:9}, merge-base to working tree)"
     TARGET_KIND="diff"
-    FILES="$(git diff --name-only "$MB"...HEAD)"
+    UNTRACKED="$(git ls-files --others --exclude-standard)"
+    FILES="$(printf '%s\n%s\n' "$(git diff --name-only "$MB")" "$UNTRACKED" | sed '/^$/d' | sort -u)"
     ;;
   range)
     SCOPE_DESC="commit range $range"
@@ -82,7 +85,7 @@ case "$mode" in
   paths)
     SCOPE_DESC="current content of: ${paths[*]}"
     TARGET_KIND="content"
-    FILES="$(git ls-files -- "${paths[@]}")"
+    FILES="$(git ls-files --cached --others --exclude-standard -- "${paths[@]}" | sort -u)"
     ;;
 esac
 
@@ -152,13 +155,18 @@ Read CLAUDE.md first for project conventions and architecture. Keep the review t
 
 Output your review as Markdown directly in your final response message. Do NOT try to write it to a file yourself — the CLI harness captures your final message and saves it on your behalf. Do NOT modify any file in the repository."
 
+# GNU timeout (macOS: brew install coreutils, which also provides gtimeout).
+if command -v timeout >/dev/null 2>&1; then TIMEOUT_CMD=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=gtimeout
+else echo "✗ needs GNU timeout (brew install coreutils)" >&2; exit 2; fi
+command -v codex >/dev/null 2>&1 || { echo "✗ needs the codex CLI on PATH" >&2; exit 2; }
+
 # --- Run Codex, bounded so it can never hang the terminal -------------------
 # -o/--output-last-message writes the final message from the OUTER harness
 # process, not from inside the model's sandboxed shell — this is deliberate:
-# Codex's own sandbox refuses to write into any directory literally named
-# .codex (even one it otherwise has workspace-write access to), so asking the
-# agent to write $OUT itself reliably fails. Letting the harness write it
-# instead sidesteps that restriction entirely.
+# Codex's own sandbox can refuse to write into review-output directories
+# (it blocks directories named .codex), so asking the agent to write $OUT
+# itself is unreliable. Letting the harness write it sidesteps that.
 CODEX_ARGS=(exec --sandbox workspace-write -o "$OUT")
 [[ -n "${CODEX_MODEL:-}" ]] && CODEX_ARGS+=(-m "$CODEX_MODEL")
 
@@ -167,9 +175,21 @@ echo "  scope : $SCOPE_DESC" >&2
 echo "  files : $(printf '%s\n' "$FILES" | wc -l | tr -d ' ')   specs: $(printf '%s\n' "$SPECS" | grep -c . || true)" >&2
 echo "  out   : $OUT   (timeout ${TIMEOUT}s)" >&2
 
-before="$(git status --porcelain)"
+# Fingerprint the whole working tree (status, tracked and staged content, and
+# untracked file contents) so an edit to an already-modified file is caught too.
+snapshot() {
+  {
+    git status --porcelain --untracked-files=all | grep -v " ${OUT#./}\$" || true
+    git diff HEAD
+    git diff --cached
+    { git ls-files --others --exclude-standard | grep -vx "${OUT#./}" || true; } | while IFS= read -r f; do
+      printf '%s ' "$f"; git hash-object -- "$f"
+    done
+  } | shasum
+}
+before="$(snapshot)"
 
-if timeout "$TIMEOUT" codex "${CODEX_ARGS[@]}" "$PROMPT"; then
+if "$TIMEOUT_CMD" "$TIMEOUT" codex "${CODEX_ARGS[@]}" "$PROMPT"; then
   if [[ -f "$OUT" ]]; then
     echo "✓ Review written to $OUT" >&2
   else
@@ -187,8 +207,8 @@ else
 fi
 
 # --- Safety net: the reviewer must not have edited code ---------------------
-after="$(git status --porcelain | grep -v " ${OUT#./}\$" || true)"
+after="$(snapshot)"
 if [[ "$after" != "$before" ]]; then
-  echo "⚠  Codex changed files other than $OUT — review these before trusting the run:" >&2
-  diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep '^>' >&2 || true
+  echo "✗ Codex changed files other than $OUT — review the working tree before trusting the run." >&2
+  exit 1
 fi
