@@ -45,6 +45,12 @@ if [[ $# -gt 0 ]]; then
   esac
 fi
 
+# GNU timeout (macOS: brew install coreutils, which also provides gtimeout).
+if command -v timeout >/dev/null 2>&1; then TIMEOUT_CMD=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=gtimeout
+else echo "✗ needs GNU timeout (brew install coreutils)" >&2; exit 2; fi
+command -v codex >/dev/null 2>&1 || { echo "✗ needs the codex CLI on PATH" >&2; exit 2; }
+
 # --- Resolve scope -> a human description, the review target, and file list ---
 case "$mode" in
   working)
@@ -156,12 +162,6 @@ $SPECS
 Read CLAUDE.md first for project conventions and architecture. Keep the review tightly focused on the scope above — do not wander into unrelated files.
 
 Output your review as Markdown directly in your final response message. Do NOT try to write it to a file yourself — the CLI harness captures your final message and saves it on your behalf. Do NOT modify any file in the repository."
-
-# GNU timeout (macOS: brew install coreutils, which also provides gtimeout).
-if command -v timeout >/dev/null 2>&1; then TIMEOUT_CMD=timeout
-elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=gtimeout
-else echo "✗ needs GNU timeout (brew install coreutils)" >&2; exit 2; fi
-command -v codex >/dev/null 2>&1 || { echo "✗ needs the codex CLI on PATH" >&2; exit 2; }
 
 # --- Run Codex, bounded so it can never hang the terminal -------------------
 # -o/--output-last-message writes the final message from the OUTER harness
