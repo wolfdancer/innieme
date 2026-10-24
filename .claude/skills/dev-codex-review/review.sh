@@ -89,7 +89,9 @@ case "$mode" in
     ;;
 esac
 
-FILES="$(printf '%s\n' "$FILES" | sed '/^$/d')"
+# Never review our own output: drop anything under the review dir.
+FILES="$(printf '%s\n' "$FILES" | sed '/^$/d' | grep -v "^${REVIEW_DIR#./}/" || true)"
+UNTRACKED="$(printf '%s\n' "$UNTRACKED" | grep -v "^${REVIEW_DIR#./}/" || true)"
 if [[ -z "$FILES" ]]; then
   echo "Nothing in scope for: $SCOPE_DESC" >&2
   exit 1
@@ -132,10 +134,10 @@ OUT="${REVIEW_DIR}/${LABEL}-${n}.md"
 if [[ "$TARGET_KIND" == "content" ]]; then
   WHAT="Review the CURRENT CONTENT of the files in scope (not a diff): is each correct, and does it match its spec?"
 elif [[ -n "$UNTRACKED" ]]; then
-  WHAT="Review the DIFF for the scope below. For files already tracked by git, get the diff yourself with the appropriate git command (e.g. \`git diff HEAD -- <file>\`). The files listed below are NEW and not yet tracked by git — plain \`git diff\` never shows untracked files, even when named explicitly — so for these, read the full current file content directly instead and review it as newly-added code:
+  WHAT="Review the DIFF for the scope below. For files already tracked by git, get the diff yourself with the git command that matches the SCOPE line below (e.g. \`git diff HEAD -- <file>\` for uncommitted changes; for a branch scope, diff against the merge-base named there). The files listed below are NEW and not yet tracked by git — plain \`git diff\` never shows untracked files, even when named explicitly — so for these, read the full current file content directly instead and review it as newly-added code:
 $UNTRACKED"
 else
-  WHAT="Review the DIFF for the scope below. Get the diff yourself with the appropriate git command."
+  WHAT="Review the DIFF for the scope below. Get the diff yourself with the git command that matches the SCOPE line below (for a branch scope that is the merge-base-to-working-tree diff, not plain \`git diff HEAD\`)."
 fi
 
 PROMPT="You are the reviewer for the 'innieme' repository (a Discord/Slack Q&A bot backed by document knowledge bases; see CLAUDE.md). Format your review EXACTLY like this: a '## BLOCKING' section (bugs, spec or CLAUDE.md violations, missing tests for specified behavior, anything that should stop a merge) and a '## NON-BLOCKING' section (style, nits, optional improvements); a path:line citation and a 'Suggested fix:' for every finding; and a final 'VERDICT: APPROVED' (no BLOCKING findings) or 'VERDICT: CHANGES_REQUESTED' line.
