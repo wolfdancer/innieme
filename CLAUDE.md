@@ -185,6 +185,11 @@ backend raises an `ImportError` until it is installed separately.
   chars and truncates at 40,000. The old `files_upload` path is gone: that endpoint was retired
   in March 2025, and a downloadable file reads worse than messages for a summary.
 
+### Project skills
+`.claude/skills/dev-codex-review` (scoped Codex review of local changes, via `review.sh`; needs the
+`codex` CLI) and `.claude/skills/dev-review-loop` (Codex review → gate → commit/PR → `/code-review`
+rounds, using `uv run pytest` and the hard-fail flake8 pass as its gate) are invoked by name only.
+
 ## Configuration
 
 Copy the example file(s) for the platform(s) you run and fill in credentials:
