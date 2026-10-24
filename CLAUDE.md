@@ -15,8 +15,7 @@ Requires Python >= 3.13 (see `pyproject.toml`).
 
 ```bash
 # Install (runtime + dev)
-pip install -e .
-pip install -r requirements.txt -r requirements-dev.txt
+uv sync            # creates .venv from uv.lock (runtime + dev group)
 
 # Run a bot via the unified CLI (-c overrides the default config path)
 innieme discord                       # default: discord_config.yaml
@@ -40,12 +39,13 @@ flake8 . --select=E9,F63,F7,F82 --show-source --statistics            # hard-fai
 flake8 . --exit-zero --max-complexity=10 --max-line-length=127 --statistics   # advisory
 ```
 
-Dependency sources: `requirements.in` / `requirements-dev.in` are the pinned inputs;
-`requirements.txt` / `requirements-dev.txt` are the compiled lockfiles that CI installs.
+Dependencies are declared in `pyproject.toml` (`dependencies` + the `dev` dependency group) and
+locked in `uv.lock`, which is committed. Add one with `uv add <pkg>` (`--dev` for dev tools); never
+hand-edit the lockfile. Prefix commands with `uv run` (or activate `.venv`).
 
 ### Continuous Integration
-`.github/workflows/python-app.yml` runs on push/PR to `main`: installs `requirements.txt`
-+ `requirements-dev.txt` + `pip install -e .`, runs the two flake8 passes above (only the
+`.github/workflows/python-app.yml` runs on push/PR to `main`: runs `uv sync --locked`
+(fails if `uv.lock` is stale), runs the two flake8 passes above (only the
 first can fail the build), then `pytest`.
 
 ## Architecture
@@ -173,7 +173,7 @@ cosine is the right metric for text embeddings, and Chroma's default squared-L2 
 normalized relevance scores that can go negative, which makes `retrieval_score_threshold`
 meaningless. Do not drop `COLLECTION_METADATA` without also revisiting the threshold logic.
 
-Note `huggingface` needs `sentence-transformers`, which is **not** in `requirements.txt` — that
+Note `huggingface` needs `sentence-transformers`, which is **not** in `pyproject.toml` — that
 backend raises an `ImportError` until it is installed separately.
 
 ### Response length limits

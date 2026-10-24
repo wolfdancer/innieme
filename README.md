@@ -44,11 +44,8 @@ step-by-step instructions for obtaining each token/ID.
 git clone https://github.com/wolfdancer/innieme.git
 cd innieme
 
-# (recommended) create a virtual environment
-python -m venv .venv && source .venv/bin/activate
-
-# install the package and its dependencies
-pip install -e .
+# create .venv and install the package with its dependencies (uses uv.lock)
+uv sync --no-dev
 ```
 
 ## Configuration
@@ -140,6 +137,52 @@ innieme discord -c custom_config.yaml
 Logging is controlled by environment variables: `LOG_LEVEL` (global, default `INFO`) and
 `INNIEME_LOG_LEVEL` (this package, default `INFO`).
 
+### Slack example
+
+End to end, from a fresh clone to a bot answering in a channel:
+
+```bash
+uv sync --no-dev
+cp slack_config.example.yaml slack_config.yaml
+```
+
+Create the Slack app by following the numbered steps at the bottom of
+`slack_config.example.yaml` (scopes, Socket Mode, install), then edit `slack_config.yaml`:
+
+```yaml
+slack_bot_token: "xoxb-..."          # OAuth & Permissions
+slack_app_token: "xapp-..."          # Basic Information → App-Level Tokens (connections:write)
+embedding_model: "openai"
+embeddings_api_key: "sk-..."
+llm_model: "anthropic:claude-sonnet-5"
+llm_api_key: "sk-ant-..."
+
+outies:
+  - outie_id: "U1234567890"          # your Member ID: profile → Copy member ID
+    topics:
+      - name: "handbook"
+        role: "You answer questions about our team handbook. Be concise."
+        docs_dir: "./docs/handbook"  # put your .md / .pdf / .docx files here
+        channels:
+          - channel_id: "C1234567890"  # channel → About → Channel ID
+```
+
+Invite the bot to the channel (`/invite @your-bot-name`), then start it:
+
+```bash
+uv run innieme slack
+```
+
+In the channel, check it is alive and ask a question:
+
+```
+@your-bot-name hello
+@your-bot-name how many vacation days do new hires get?
+```
+
+The bot replies in a thread and keeps answering follow-ups there without another mention. After
+editing the documents, send `@your-bot-name rescan` instead of restarting.
+
 ### Slack commands
 
 Ask a question by mentioning the bot, or by replying in a thread it is already following. The
@@ -182,7 +225,7 @@ docker run -v "$(pwd)/slack_config.yaml:/app/slack_config.yaml" -v "$(pwd)/data:
 
 ```bash
 # install dev dependencies
-pip install -e . && pip install -r requirements-dev.txt
+uv sync
 
 # run the test suite
 pytest
