@@ -1,7 +1,7 @@
 from .embeddings_factory import EmbeddingsFactory
 from .vector_store_factory import VectorStoreFactory
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import pypdf
 import docx
@@ -10,7 +10,7 @@ import glob
 from pydantic import SecretStr
 
 from typing import List, Dict, Optional, Union
-from langchain.embeddings.base import Embeddings
+from langchain_core.embeddings import Embeddings
 
 import logging
 import os

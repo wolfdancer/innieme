@@ -1,5 +1,5 @@
-from langchain.vectorstores.base import VectorStore
-from langchain.embeddings.base import Embeddings
+from langchain_core.vectorstores import VectorStore
+from langchain_core.embeddings import Embeddings
 from langchain_chroma.vectorstores import Chroma
 from langchain_community.vectorstores import FAISS
 

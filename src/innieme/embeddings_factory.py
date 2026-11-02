@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pydantic import SecretStr
-from langchain.embeddings.base import Embeddings
+from langchain_core.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 

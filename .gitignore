@@ -199,3 +199,6 @@ data/
 
 # Review-loop ledgers (dev-review-loop skill)
 .review-loop/
+
+# Review skills (review-with-codex)
+.codex/review/
