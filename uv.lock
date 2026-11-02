@@ -1522,7 +1522,7 @@ requires-dist = [
     { name = "langchain-text-splitters" },
     { name = "numpy" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "pydantic-ai", specifier = ">=1.0.0" },
+    { name = "pydantic-ai", specifier = ">=2.64.0" },
     { name = "pypdf" },
     { name = "python-docx" },
     { name = "python-dotenv" },
