@@ -12,7 +12,8 @@ dependencies = [
     "slack-bolt",
     "python-dotenv",
     "chromadb",
-    "langchain>=0.1.0,<1.0.0",
+    "langchain-core",
+    "langchain-text-splitters",
     "langchain-community",
     "langchain-chroma",
     "langchain-huggingface",
@@ -22,8 +23,8 @@ dependencies = [
     "faiss-cpu",
     "numpy",
     "openai>=1.0.0",
-    "pydantic-ai>=1.0.0",
-    "audioop-lts==0.2.1; python_version >= '3.13'",
+    "pydantic-ai>=2.64.0",
+    "audioop-lts==0.2.2; python_version >= '3.13'",
 ]
 
 [dependency-groups]
