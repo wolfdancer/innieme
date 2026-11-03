@@ -1,15 +1,19 @@
 from abc import ABC, abstractmethod
-from pydantic import SecretStr
+
 from langchain_core.embeddings import Embeddings
-from langchain_openai import OpenAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
+from pydantic import SecretStr
+
 
 class EmbeddingsFactory(ABC):
     """Abstract factory interface for creating embeddings"""
+
     @abstractmethod
     def create_embeddings(self) -> Embeddings:
         """Create and return an embeddings instance"""
         pass
+
 
 class OpenAIEmbeddingsFactory(EmbeddingsFactory):
     # langchain's own default is the legacy text-embedding-ada-002, which is
@@ -26,6 +30,7 @@ class OpenAIEmbeddingsFactory(EmbeddingsFactory):
             model=self.model_name,
         )
 
+
 class HuggingFaceEmbeddingsFactory(EmbeddingsFactory):
     DEFAULT_MODEL = "all-MiniLM-L6-v2"
 
@@ -35,9 +40,9 @@ class HuggingFaceEmbeddingsFactory(EmbeddingsFactory):
 
     def create_embeddings(self) -> Embeddings:
         return HuggingFaceEmbeddings(
-            model_name=self.model_name,
-            cache_folder=self.cache_dir
+            model_name=self.model_name, cache_folder=self.cache_dir
         )
+
 
 class ExistingEmbeddingsFactory(EmbeddingsFactory):
     def __init__(self, embeddings: Embeddings):

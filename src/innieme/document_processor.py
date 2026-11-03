@@ -1,20 +1,18 @@
-from .embeddings_factory import EmbeddingsFactory
-from .vector_store_factory import VectorStoreFactory
-
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-import pypdf
-import docx
 import fnmatch
 import glob
-from pydantic import SecretStr
-
-from typing import List, Dict, Optional, Union
-from langchain_core.embeddings import Embeddings
-
 import logging
 import os
 import time
+from typing import Dict, List, Optional, Union
+
+import docx
+import pypdf
+from langchain_core.embeddings import Embeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pydantic import SecretStr
+
+from .embeddings_factory import EmbeddingsFactory
+from .vector_store_factory import VectorStoreFactory
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +24,14 @@ DEFAULT_DOCS_EXCLUDE = ["CLAUDE.md"]
 
 
 class DocumentProcessor:
-    def __init__(self,
-                 topic: str,
-                 docs_dir: str,
-                 embeddings_factory: EmbeddingsFactory,
-                 vector_store_factory: VectorStoreFactory,
-                 docs_exclude: Optional[List[str]] = None):
+    def __init__(
+        self,
+        topic: str,
+        docs_dir: str,
+        embeddings_factory: EmbeddingsFactory,
+        vector_store_factory: VectorStoreFactory,
+        docs_exclude: Optional[List[str]] = None,
+    ):
         self.docs_dir = docs_dir
         self.topic = topic
         self.embeddings_factory = embeddings_factory
@@ -41,8 +41,7 @@ class DocumentProcessor:
             list(DEFAULT_DOCS_EXCLUDE) if docs_exclude is None else list(docs_exclude)
         )
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
+            chunk_size=1000, chunk_overlap=200
         )
 
     def _is_excluded(self, file_path: str) -> bool:
@@ -69,7 +68,7 @@ class DocumentProcessor:
         collection_name = self._get_collection_name()
         return self.vector_store_factory.create_empty_store(
             collection_name=collection_name,
-            embeddings=self.embeddings_factory.create_embeddings()
+            embeddings=self.embeddings_factory.create_embeddings(),
         )
 
     def _get_collection_name(self) -> str:
@@ -82,11 +81,13 @@ class DocumentProcessor:
     async def scan_and_vectorize(self) -> str:
         """Scan all documents in the specified directory and create vector embeddings"""
         document_texts = []
-        
+
         # Get all files with common document extensions
         found = []
-        for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
-            found.extend(glob.glob(os.path.join(self.docs_dir, '**', ext), recursive=True))
+        for ext in ["*.pdf", "*.docx", "*.txt", "*.md"]:
+            found.extend(
+                glob.glob(os.path.join(self.docs_dir, "**", ext), recursive=True)
+            )
 
         files = [f for f in found if not self._is_excluded(f)]
         excluded = [f for f in found if self._is_excluded(f)]
@@ -135,13 +136,15 @@ class DocumentProcessor:
         all_chunks = []
         for doc in document_texts:
             chunks = self.text_splitter.split_text(doc["text"])
-            all_chunks.extend([{"text": chunk, "source": doc["source"]} for chunk in chunks])
-        
+            all_chunks.extend(
+                [{"text": chunk, "source": doc["source"]} for chunk in chunks]
+            )
+
         # Create vector store
         texts = [chunk["text"] for chunk in all_chunks]
 
         collection_name = self._get_collection_name()
-        
+
         response = ""
         if not texts:
             self.vectorstore = self._create_empty_store()
@@ -152,7 +155,7 @@ class DocumentProcessor:
                 texts,
                 self.embeddings_factory.create_embeddings(),
                 collection_name=collection_name,
-                metadatas=metadatas
+                metadatas=metadatas,
             )
             response = f"On topic '{self.topic}': {len(all_chunks)} chunks created from {count} out of {len(files)} references"
         if excluded:
@@ -163,17 +166,17 @@ class DocumentProcessor:
             plural = "s" if len(excluded) != 1 else ""
             response += f" ({len(excluded)} file{plural} excluded; see logs)"
         return response
-    
+
     async def _extract_text(self, file_path):
         """Extract text from a document file based on its extension"""
         _, ext = os.path.splitext(file_path)
-        
+
         try:
-            if ext.lower() == '.pdf':
+            if ext.lower() == ".pdf":
                 return await self._extract_from_pdf(file_path)
-            elif ext.lower() == '.docx':
+            elif ext.lower() == ".docx":
                 return await self._extract_from_docx(file_path)
-            elif ext.lower() == '.txt' or ext.lower() == '.md':
+            elif ext.lower() == ".txt" or ext.lower() == ".md":
                 return await self._extract_from_txt(file_path)
             else:
                 logger.warning(f"Unsupported file format: {file_path}")
@@ -181,11 +184,11 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Error extracting text from {file_path}: {str(e)}")
             return None
-    
+
     async def _extract_from_pdf(self, file_path):
         """Extract text from a PDF file"""
         text = ""
-        with open(file_path, 'rb') as file:
+        with open(file_path, "rb") as file:
             reader = pypdf.PdfReader(file)
             for page_num in range(len(reader.pages)):
                 page = reader.pages[page_num]
@@ -195,19 +198,19 @@ class DocumentProcessor:
                 # failure rather than an empty file.
                 text += (page.extract_text() or "") + "\n"
         return text
-    
+
     async def _extract_from_docx(self, file_path):
         """Extract text from a DOCX file"""
         doc = docx.Document(file_path)
         text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
         return text
-    
+
     async def _extract_from_txt(self, file_path):
         """Extract text from a TXT file"""
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
             text = file.read()
         return text
-    
+
     async def search_documents(self, query, top_k=5, score_threshold=None) -> List:
         """Search the vectorstore for relevant document chunks.
 
