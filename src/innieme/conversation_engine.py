@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -5,23 +6,29 @@ from pydantic_ai import Agent, RunContext
 from .document_processor import DocumentProcessor
 from .knowledge_manager import KnowledgeManager
 from .discord_bot_config import TopicConfig
+from .index_status import describe_for_model
 import logging
 import os
 
 logger = logging.getLogger(__name__)
 
 
-def _format_chunk(doc) -> str:
+def _format_chunk(doc, changed_sources: frozenset = frozenset()) -> str:
     """Render one retrieved chunk, labelled with the file it came from.
 
     The source filename lets the model attribute a detail to a specific
     document; without it the chunks arrive anonymously and any citation the
-    model offers is a guess.
+    model offers is a guess. A source in ``changed_sources`` was modified or
+    deleted after it was indexed, and the label says so: that is the one fact
+    the model cannot otherwise know about an excerpt.
     """
     source = (doc.metadata or {}).get("source")
     if not source:
         return doc.page_content
-    return f"[source: {os.path.basename(source)}]\n{doc.page_content}"
+    label = os.path.basename(source)
+    if source in changed_sources:
+        label += ", changed since it was indexed"
+    return f"[source: {label}]\n{doc.page_content}"
 
 
 def _build_model(model_str: str, api_key: str):
@@ -50,6 +57,8 @@ class ConversationDependencies:
     document_context: str
     conversation_history: list
     topic_role: str
+    # See index_status.describe_for_model; empty before the first scan.
+    index_note: str = ""
 
 
 def _build_system_prompt(ctx: RunContext[ConversationDependencies]) -> str:
@@ -59,6 +68,8 @@ def _build_system_prompt(ctx: RunContext[ConversationDependencies]) -> str:
             f"Here is some relevant information to help answer the query:"
             f"\n\n{ctx.deps.document_context}"
         )
+    if ctx.deps.index_note:
+        parts.append(ctx.deps.index_note)
     if ctx.deps.conversation_history:
         history_text = "\n".join(
             [f"{m['role']}: {m['content']}" for m in ctx.deps.conversation_history]
@@ -116,6 +127,18 @@ class ConversationEngine:
         )
         return await self._generate_response(query, relevant_docs, context_messages)
 
+    async def _index_freshness(self):
+        """The freshness check, off the event loop and never fatal.
+
+        It only informs the answer, so a failure (an unmounted notes directory,
+        say) must not stop the question being answered.
+        """
+        try:
+            return await asyncio.to_thread(self.document_processor.check_freshness)
+        except Exception:
+            logger.exception("Index freshness check failed")
+            return None
+
     async def _generate_response(self, query: str, relevant_docs, history) -> str:
         """Generate a response using PydanticAI agent.
 
@@ -124,7 +147,10 @@ class ConversationEngine:
             relevant_docs: List of relevant document chunks from document processor
             history: List of previous conversation messages (excluding current query)
         """
-        context = "\n\n".join(_format_chunk(doc) for doc in relevant_docs)
+        freshness = await self._index_freshness()
+        changed = freshness.changed_sources if freshness else frozenset()
+        context = "\n\n".join(_format_chunk(doc, changed) for doc in relevant_docs)
+        index_note = describe_for_model(self.document_processor.snapshot, freshness)
 
         logger.debug("--------- Sent to LLM ---------")
         logger.debug(f"System message: {self.topic.role}")
@@ -137,6 +163,7 @@ class ConversationEngine:
             document_context=context,
             conversation_history=prior_history,
             topic_role=self.topic.role,
+            index_note=index_note,
         )
 
         response = ""

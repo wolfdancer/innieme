@@ -588,6 +588,10 @@ class TestParseBotCommand:
 
     BOT = "U0BOT"
 
+    def test_status_is_a_command(self):
+        assert parse_bot_command(f"<@{self.BOT}> status", self.BOT) == "status"
+        assert parse_bot_command(f"<@{self.BOT}> what is the status?", self.BOT) is None
+
     def test_bare_command_after_mention(self):
         assert parse_bot_command(f"<@{self.BOT}> rescan", self.BOT) == "rescan"
         assert parse_bot_command(f"<@{self.BOT}> quit", self.BOT) == "quit"
@@ -815,6 +819,8 @@ def _topic(outie_id="U1234567890", name="math"):
     topic.config = Mock(name=name)
     topic.config.name = name
     topic.outie_config = Mock(outie_id=outie_id)
+    topic.config.docs_dir = "/notes"
+    topic.index_snapshot = None
     return topic
 
 
@@ -888,24 +894,107 @@ async def test_a_failed_success_post_is_not_reported_as_a_failed_rescan(mock_con
 
 
 @pytest.mark.asyncio
-async def test_commands_are_outie_only(mock_config):
-    """Anyone in the channel can mention the bot, so commands must be gated"""
+async def test_quit_is_outie_only(mock_config):
+    """Anyone in the channel can mention the bot, so shutdown must be gated"""
     client = Mock()
     client.chat_postMessage = AsyncMock()
     bot = _command_bot(mock_config, client)
 
     topic = _topic(outie_id="U1234567890")
-    topic.scan_and_vectorize = AsyncMock()
     bot.stop = AsyncMock()
     event = {"channel": "C1234567890", "user": "U0INTRUDER", "ts": "111.1"}
 
-    await bot.run_bot_command("rescan", topic, event, client)
     await bot.run_bot_command("quit", topic, event, client)
 
-    topic.scan_and_vectorize.assert_not_awaited()
     bot.stop.assert_not_awaited()
-    for call in client.chat_postMessage.await_args_list:
-        assert "only available to the outie" in call.kwargs["text"]
+    assert "only available to the outie" in client.chat_postMessage.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_rescan_is_open_to_everyone(mock_config):
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    client.reactions_add = AsyncMock()
+    client.reactions_remove = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic(outie_id="U1234567890")
+    topic.scan_and_vectorize = AsyncMock(return_value="done")
+    event = {"channel": "C1234567890", "user": "U0ANYONE", "ts": "111.1"}
+
+    await bot.run_bot_command("rescan", topic, event, client)
+
+    topic.scan_and_vectorize.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rescan_reports_how_long_it_took(mock_config):
+    from innieme.index_status import IndexSnapshot
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    client.reactions_add = AsyncMock()
+    client.reactions_remove = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic()
+    topic.scan_and_vectorize = AsyncMock(return_value="12 chunks")
+    topic.index_snapshot = IndexSnapshot(
+        started_at=0, finished_at=4.2, extract_seconds=1.0, index_seconds=3.2,
+        files={}, failed=[], indexed_count=3, chunk_count=12)
+    event = {"channel": "C1234567890", "user": "U0ANYONE", "ts": "111.1"}
+
+    await bot.run_bot_command("rescan", topic, event, client)
+
+    assert "Rescan complete in 4.2s. 12 chunks" in client.chat_postMessage.await_args.kwargs["text"]
+
+
+def _status_topic(outie_id="U1234567890"):
+    from innieme.index_status import FileStamp, IndexFreshness, IndexSnapshot
+    topic = _topic(outie_id=outie_id)
+    topic.config.docs_dir = "/notes"
+    topic.index_snapshot = IndexSnapshot(
+        started_at=0, finished_at=0, extract_seconds=1.0, index_seconds=2.0,
+        files={"/notes/Northwind.md": FileStamp(1, 1)}, failed=[],
+        indexed_count=1, chunk_count=4)
+    topic.index_freshness = AsyncMock(return_value=IndexFreshness(
+        checked_at=0, modified=["/notes/Northwind.md"], added=["/notes/<b>&.md"]))
+    return topic
+
+
+@pytest.mark.asyncio
+async def test_status_is_open_but_names_files_only_to_the_outie(mock_config):
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+    topic = _status_topic()
+
+    await bot.run_bot_command(
+        "status", topic, {"channel": "C1", "user": "U0ANYONE", "ts": "1.1"}, client)
+    anyone = client.chat_postMessage.await_args.kwargs["text"]
+    assert "2 changed since" in anyone
+    assert "Northwind.md" not in anyone
+
+    await bot.run_bot_command(
+        "status", topic, {"channel": "C1", "user": "U1234567890", "ts": "1.1"}, client)
+    outie = client.chat_postMessage.await_args.kwargs["text"]
+    assert "`Northwind.md`" in outie
+    # An untrusted file name cannot inject Slack control syntax.
+    assert "<b>" not in outie and "&lt;b&gt;&amp;.md" in outie
+
+
+@pytest.mark.asyncio
+async def test_status_failure_does_not_leak_details(mock_config):
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    bot = _command_bot(mock_config, client)
+    topic = _status_topic()
+    topic.index_freshness = AsyncMock(side_effect=OSError("/secret/path"))
+
+    await bot.run_bot_command(
+        "status", topic, {"channel": "C1", "user": "U0ANYONE", "ts": "1.1"}, client)
+
+    text = client.chat_postMessage.await_args.kwargs["text"]
+    assert "/secret/path" not in text and "logs" in text
 
 
 @pytest.mark.asyncio

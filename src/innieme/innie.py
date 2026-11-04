@@ -1,3 +1,4 @@
+import asyncio
 from .embeddings_factory import EmbeddingsFactory, OpenAIEmbeddingsFactory, HuggingFaceEmbeddingsFactory, ExistingEmbeddingsFactory
 from .vector_store_factory import ChromaVectorStoreFactory, FAISSVectorStoreFactory
 from .document_processor import DocumentProcessor
@@ -89,6 +90,14 @@ class Topic:
         self.active_threads.add(thread_id)
         self.thread_history[thread_id] = context_messages
         return await self.conversation_engine.process_query(query, context_messages)
+
+    @property
+    def index_snapshot(self):
+        return self.document_processor.snapshot
+
+    async def index_freshness(self):
+        """Fresh (uncached) comparison of the docs directory with the last scan."""
+        return await asyncio.to_thread(self.document_processor.check_freshness, True)
 
     async def scan_and_vectorize(self) -> str:
         return await self.document_processor.scan_and_vectorize()

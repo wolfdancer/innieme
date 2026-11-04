@@ -188,3 +188,30 @@ async def test_engine_falls_back_to_defaults_for_older_configs():
     processor.search_documents.assert_awaited_once_with(
         "q", top_k=5, score_threshold=None
     )
+
+
+def test_format_chunk_flags_a_source_changed_since_indexing():
+    from innieme.conversation_engine import _format_chunk
+    from unittest.mock import Mock
+    doc = Mock(page_content="Stage 3.", metadata={"source": "/n/Northwind.md"})
+    assert "[source: Northwind.md]" in _format_chunk(doc)
+    flagged = _format_chunk(doc, frozenset({"/n/Northwind.md"}))
+    assert "[source: Northwind.md, changed since it was indexed]" in flagged
+    assert "[source: Northwind.md]" in _format_chunk(doc, frozenset({"/n/Other.md"}))
+
+
+def test_system_prompt_includes_the_index_note():
+    from innieme.conversation_engine import ConversationDependencies, _build_system_prompt
+    from unittest.mock import Mock
+    deps = ConversationDependencies("ctx", [], "You are a bot.", index_note="Index built X.")
+    assert "Index built X." in _build_system_prompt(Mock(deps=deps))
+    bare = ConversationDependencies("ctx", [], "You are a bot.")
+    assert "Index built" not in _build_system_prompt(Mock(deps=bare))
+
+
+@pytest.mark.asyncio
+async def test_freshness_failure_does_not_block_an_answer(conversation_engine):
+    def boom(*a, **k):
+        raise OSError("notes volume unmounted")
+    conversation_engine.document_processor.check_freshness = boom
+    assert await conversation_engine._index_freshness() is None

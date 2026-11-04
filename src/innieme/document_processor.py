@@ -1,3 +1,4 @@
+import asyncio
 import fnmatch
 import glob
 import logging
@@ -12,6 +13,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import SecretStr
 
 from .embeddings_factory import EmbeddingsFactory
+from .index_status import FileStamp, IndexFreshness, IndexSnapshot
 from .vector_store_factory import VectorStoreFactory
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,11 @@ DEFAULT_DOCS_EXCLUDE = ["CLAUDE.md"]
 
 
 class DocumentProcessor:
+    # How long a freshness check is reused. Per-query checks would otherwise
+    # re-glob the directory for every message; a note edited seconds ago being
+    # reported a half-minute late is harmless. 0 disables the cache.
+    FRESHNESS_CACHE_SECONDS = 30
+
     def __init__(
         self,
         topic: str,
@@ -43,6 +50,13 @@ class DocumentProcessor:
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=200
         )
+        # Set only by a scan that completes, together with the vectorstore it
+        # describes, so the two never disagree. A failed scan leaves both alone.
+        self.snapshot: Optional[IndexSnapshot] = None
+        self._freshness: Optional[IndexFreshness] = None
+        # Rescan is open to everyone, so two can arrive at once. They would each
+        # embed every document and the slower one would win; serialize instead.
+        self._scan_lock = asyncio.Lock()
 
     def _is_excluded(self, file_path: str) -> bool:
         """Whether a scanned file matches an exclusion pattern.
@@ -78,22 +92,33 @@ class DocumentProcessor:
         timestamp = int(time.time() * 1000)  # Milliseconds since epoch
         return f"{safe_topic}_{timestamp}"
 
-    async def scan_and_vectorize(self) -> str:
-        """Scan all documents in the specified directory and create vector embeddings"""
-        document_texts = []
-
-        # Get all files with common document extensions
+    def _discover_files(self):
+        """The candidate files under ``docs_dir``, split into (kept, excluded)."""
         found = []
         for ext in ["*.pdf", "*.docx", "*.txt", "*.md"]:
             found.extend(
                 glob.glob(os.path.join(self.docs_dir, "**", ext), recursive=True)
             )
-
         files = [f for f in found if not self._is_excluded(f)]
         excluded = [f for f in found if self._is_excluded(f)]
+        return files, excluded
+
+    async def scan_and_vectorize(self) -> str:
+        """Scan all documents in the specified directory and create vector embeddings"""
+        async with self._scan_lock:
+            return await self._scan_and_vectorize()
+
+    async def _scan_and_vectorize(self) -> str:
+        started_at = time.time()
+        started = time.monotonic()
+        document_texts = []
+
+        # Get all files with common document extensions
+        files, excluded = self._discover_files()
+        found_count = len(files) + len(excluded)
 
         logger.info(
-            f"For {self.topic}: Found {len(found)}, excluded {len(excluded)}, "
+            f"For {self.topic}: Found {found_count}, excluded {len(excluded)}, "
             f"processing {len(files)} under {self.docs_dir}..."
         )
         # Log exclusions explicitly: a file silently missing from the knowledge
@@ -102,14 +127,20 @@ class DocumentProcessor:
             logger.info(f"  - skipped (excluded): {os.path.basename(file_path)}")
         # Process each file based on its type
         count = 0
-        failures = 0
+        failed: List[str] = []
+        stamps: Dict[str, FileStamp] = {}
         for file_path in files:
             logger.info(f"  - {file_path}")
+            # Stamped before reading, so an edit that lands mid-scan compares as
+            # changed afterwards instead of hiding behind a newer stamp.
+            stamp = FileStamp.of(file_path)
+            if stamp is not None:
+                stamps[file_path] = stamp
             text = await self._extract_text(file_path)
             if text is None:
                 # _extract_text logs the cause and returns None.
                 logger.error(f"    Text extraction failed for {file_path}")
-                failures += 1
+                failed.append(file_path)
             elif not text.strip():
                 # Readable but empty, which is not a failure: an empty file has
                 # nothing to contribute and should not hold up the rest.
@@ -118,8 +149,10 @@ class DocumentProcessor:
                 document_texts.append({"text": text, "source": file_path})
                 count += 1
         logger.info(f"Done. Extracted text from {count} documents")
+        extract_seconds = time.monotonic() - started
+        index_started = time.monotonic()
 
-        if failures and not count:
+        if failed and not count:
             # Every readable candidate failed — a permissions change, a corrupt
             # file, an unreadable encoding. Raising *before* self.vectorstore is
             # reassigned is what keeps the previous index intact, which matters
@@ -158,6 +191,17 @@ class DocumentProcessor:
                 metadatas=metadatas,
             )
             response = f"On topic '{self.topic}': {len(all_chunks)} chunks created from {count} out of {len(files)} references"
+        self.snapshot = IndexSnapshot(
+            started_at=started_at,
+            finished_at=time.time(),
+            extract_seconds=extract_seconds,
+            index_seconds=time.monotonic() - index_started,
+            files=stamps,
+            failed=failed,
+            indexed_count=count,
+            chunk_count=len(all_chunks),
+        )
+        self._freshness = None  # computed against the previous snapshot
         if excluded:
             # Count only, never names: the channel-facing message is visible to
             # everyone, and a file is often excluded precisely because those
@@ -166,6 +210,42 @@ class DocumentProcessor:
             plural = "s" if len(excluded) != 1 else ""
             response += f" ({len(excluded)} file{plural} excluded; see logs)"
         return response
+
+    def check_freshness(self, force: bool = False) -> Optional[IndexFreshness]:
+        """Compare the directory with the last scan, by ``stat`` alone.
+
+        None until a scan has completed. A recent result is reused unless
+        ``force`` is set (the ``status`` command wants the truth, not a
+        half-minute-old answer). Blocking, but it reads no file contents; async
+        callers should run it in a thread.
+        """
+        snapshot = self.snapshot
+        if snapshot is None:
+            return None
+        cached = self._freshness
+        if (
+            not force
+            and cached is not None
+            and time.time() - cached.checked_at < self.FRESHNESS_CACHE_SECONDS
+        ):
+            return cached
+
+        current, _ = self._discover_files()
+        freshness = IndexFreshness(checked_at=time.time())
+        seen = set()
+        for path in current:
+            seen.add(path)
+            stamp = FileStamp.of(path)
+            if stamp is None:
+                continue
+            recorded = snapshot.files.get(path)
+            if recorded is None:
+                freshness.added.append(path)
+            elif recorded != stamp:
+                freshness.modified.append(path)
+        freshness.removed = [p for p in snapshot.files if p not in seen]
+        self._freshness = freshness
+        return freshness
 
     async def _extract_text(self, file_path):
         """Extract text from a document file based on its extension"""

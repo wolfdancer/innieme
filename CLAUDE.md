@@ -68,6 +68,17 @@ first can fail the build), then `uv run pytest`.
 4. The LLM is configurable via `llm_model` (default `openai:gpt-5.6-terra`); the provider/model
    string and `llm_api_key` are resolved in `conversation_engine._build_model()`.
 
+### Index freshness
+
+Each completed scan stores an `IndexSnapshot` (`index_status.py`) on `DocumentProcessor.snapshot`:
+scan start/end, read vs. index timings, chunk count, failed files, and a `FileStamp` (mtime_ns +
+size, taken *before* the file is read) for every candidate file. `check_freshness()` re-globs and
+`stat`s only, comparing against it (modified / new / removed; cached 30s unless `force=True`). A
+failed scan leaves the previous snapshot and index untouched. The model sees this two ways:
+`_format_chunk()` marks a chunk whose source changed since indexing, and a count-only note is added
+to the system prompt (`describe_for_model`). Concurrent scans are serialized by a lock. Not
+persisted: the index is rebuilt every startup.
+
 ### Core components
 
 - **DiscordBot** (`src/innieme/discord_bot.py`) / **SlackBot** (`src/innieme/slack_bot.py`):
@@ -147,8 +158,11 @@ thread ID; subsequent messages in that thread are answered automatically without
 - Admins can summarize a thread ("summary and file" on Discord, `/approve` etc. on Slack) and
   approve the summary to be stored into the knowledge base (`./data/summaries/`).
 - Slack commands are **mentions**, not slash commands (`BOT_COMMANDS` in `slack_bot.py`):
-  - `@bot rescan` — re-vectorizes the topic's documents without a restart. Outie only.
+  - `@bot rescan` — re-vectorizes the topic's documents without a restart.
   - `@bot quit` — shuts the bot down, process and all. Outie only.
+  - `@bot rescan` and `@bot status` are open to everyone; only `quit` is outie-only. `status`
+    reports the last scan's time, duration, file/chunk counts, and how many files changed since
+    (counts for everyone, file names for the outie only). `rescan` replies with its duration.
   - `@bot hello` — posts the introduction card. Open to everyone and needs no topic, so it
     still answers in a channel nobody has configured, which is where "is this bot alive?"
     gets asked. Handled before the topic lookup in `handle_mention` for that reason.

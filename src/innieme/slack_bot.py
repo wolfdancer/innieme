@@ -1,5 +1,6 @@
 from .slack_bot_config import SlackBotConfig
 from .innie import Innie, Topic
+from .index_status import describe_for_channel, format_duration
 
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
@@ -45,10 +46,14 @@ WORKING_REACTION = "thinking_face"
 # rather than slash commands because a slash command has to be declared in the
 # Slack app config as well as here, so it cannot ship in code alone.
 #
-# "quit" and "rescan" act on the channel's topic and are outie-only. "hello" is
-# an information card: no topic required and open to everyone, matching the
-# /hello slash command it replaces.
-BOT_COMMANDS = frozenset({"quit", "rescan", "hello"})
+# "quit" shuts the bot down and is outie-only. "rescan" and "status" act on the
+# channel's topic and are open to everyone: a rescan only rebuilds the index from
+# the same files, and concurrent ones are serialized, so the worst a stray one
+# costs is some embedding calls. "status" shows counts to everyone and file names
+# to the outie only. "hello" is an information card: no topic required and open
+# to everyone, matching the /hello slash command it replaces.
+BOT_COMMANDS = frozenset({"quit", "rescan", "status", "hello"})
+OUTIE_ONLY_COMMANDS = frozenset({"quit"})
 
 # Both mention forms Slack markup allows: the bare "<@U123>" and the labelled
 # "<@U123|name>". The ID is captured so the same pattern answers "was the bot
@@ -149,6 +154,16 @@ def parse_bot_command(text: str, bot_user_id: str) -> Optional[str]:
     remainder = _strip_bot_mention(text, bot_user_id)
     word = remainder.strip().rstrip(_COMMAND_TRAILING_PUNCTUATION).strip().lower()
     return word if word in BOT_COMMANDS else None
+
+
+def _slack_code(name: str) -> str:
+    """A file name as inline code, safe to post.
+
+    A name is untrusted text. Slack treats ``&``, ``<`` and ``>`` as control
+    syntax even inside code, and a backtick would end the span early.
+    """
+    escaped = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return f"`{escaped.replace(chr(96), chr(39))}`"
 
 
 # Slack recommends keeping a message under 4,000 characters and truncates at
@@ -374,7 +389,7 @@ class SlackBot:
             await ack()
             await self.approve_summary(command, client)
                     
-        # "quit", "rescan" and "hello" are mention commands (see
+        # "quit", "rescan", "status" and "hello" are mention commands (see
         # parse_bot_command), not slash commands: they need no Slack-side app
         # configuration to work.
 
@@ -608,14 +623,14 @@ class SlackBot:
             )
 
     async def run_bot_command(self, command: str, topic: Topic, event: Dict[str, Any], client: AsyncWebClient):
-        """Run a mention command ("quit", "rescan") on behalf of the outie."""
+        """Run a mention command ("quit", "rescan", "status")."""
         channel_id = event["channel"]
         # Reply in the mention's own thread. Falling back to the message ts
         # mirrors handle_mention, which threads a top-level mention under itself.
         thread_ts = event.get("thread_ts") or event["ts"]
         outie_id = topic.outie_config.outie_id
 
-        if event.get("user") != outie_id:
+        if command in OUTIE_ONLY_COMMANDS and event.get("user") != outie_id:
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
@@ -625,6 +640,8 @@ class SlackBot:
 
         if command == "rescan":
             await self.rescan(topic, channel_id, event["ts"], thread_ts)
+        elif command == "status":
+            await self.post_status(topic, channel_id, thread_ts, event.get("user") == outie_id)
         elif command == "quit":
             await client.chat_postMessage(
                 channel=channel_id,
@@ -645,6 +662,24 @@ class SlackBot:
             text=HELLO_FALLBACK_TEXT,
             blocks=hello_blocks()
         )
+
+    async def post_status(self, topic: Topic, channel_id: str, thread_ts: str, is_outie: bool):
+        """Report when the index was built, how long it took, and what has changed since."""
+        try:
+            freshness = await topic.index_freshness()
+            text = describe_for_channel(
+                topic.config.name,
+                topic.index_snapshot,
+                freshness,
+                topic.config.docs_dir,
+                show_names=is_outie,
+                quote=_slack_code,
+            )
+        except Exception:
+            # Same discretion as a failed rescan: paths stay out of the channel.
+            logger.exception(f"Status check failed for topic {topic.config.name}")
+            text = "I couldn't check the index status; details are in the bot logs."
+        await self.client.chat_postMessage(channel=channel_id, thread_ts=thread_ts, text=text)
 
     async def rescan(self, topic: Topic, channel_id: str, message_ts: str, thread_ts: str):
         """Re-scan and re-vectorize the topic's documents.
@@ -672,7 +707,7 @@ class SlackBot:
         still serving when the new one actually loaded.
         """
         try:
-            return f"Rescan complete. {await topic.scan_and_vectorize()}"
+            message = await topic.scan_and_vectorize()
         except Exception:
             logger.exception(f"Rescan failed for topic {topic.config.name}")
             # The exception text stays out of the channel: it routinely carries
@@ -685,6 +720,11 @@ class SlackBot:
             # knowledge base.
             return ("Rescan failed; details are in the bot logs. "
                     "Still answering from the previously loaded documents.")
+        # Outside the try: the timing is garnish, and must not turn a rescan that
+        # worked into one reported as failed.
+        snapshot = topic.index_snapshot
+        took = f" in {format_duration(snapshot.duration)}" if snapshot else ""
+        return f"Rescan complete{took}. {message}"
 
     async def connect_and_prepare(self, topic: Topic):
         """Connect to channels and prepare documents"""

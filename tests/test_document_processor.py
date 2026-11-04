@@ -289,3 +289,200 @@ async def test_empty_files_are_not_treated_as_failures(document_processor, test_
 
     assert "no documents found to process" in result
     assert document_processor.vectorstore is not None
+
+
+# --- Index snapshot and freshness -------------------------------------------
+
+import asyncio
+
+from innieme.index_status import (
+    describe_for_channel,
+    describe_for_model,
+    format_age,
+)
+
+
+def _bump(path, seconds=10):
+    """Move a file's mtime forward without relying on clock resolution."""
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + seconds * 10**9))
+
+
+@pytest.mark.asyncio
+async def test_no_snapshot_before_first_scan(document_processor):
+    assert document_processor.snapshot is None
+    assert document_processor.check_freshness() is None
+
+
+@pytest.mark.asyncio
+async def test_scan_records_snapshot_with_timings(document_processor, sample_txt_file):
+    await document_processor.scan_and_vectorize()
+    snap = document_processor.snapshot
+    assert snap.indexed_count == 1
+    assert snap.chunk_count >= 1
+    assert str(sample_txt_file) in snap.files
+    assert snap.failed == []
+    assert snap.finished_at >= snap.started_at
+    assert snap.extract_seconds >= 0 and snap.index_seconds >= 0
+    assert snap.duration == snap.extract_seconds + snap.index_seconds
+
+
+@pytest.mark.asyncio
+async def test_freshness_detects_modified_added_removed(
+    document_processor, test_docs_dir, sample_txt_file
+):
+    gone = test_docs_dir / "gone.txt"
+    gone.write_text("soon deleted")
+    await document_processor.scan_and_vectorize()
+    assert document_processor.check_freshness(force=True).is_current
+
+    sample_txt_file.write_text("This is a changed test document, longer than before.")
+    added = test_docs_dir / "new.md"
+    added.write_text("brand new")
+    gone.unlink()
+
+    fresh = document_processor.check_freshness(force=True)
+    assert fresh.modified == [str(sample_txt_file)]
+    assert fresh.added == [str(added)]
+    assert fresh.removed == [str(gone)]
+    assert fresh.changed_sources == {str(sample_txt_file), str(gone)}
+
+
+@pytest.mark.asyncio
+async def test_mtime_change_alone_is_detected(document_processor, sample_txt_file):
+    await document_processor.scan_and_vectorize()
+    _bump(sample_txt_file)
+    assert document_processor.check_freshness(force=True).modified == [str(sample_txt_file)]
+
+
+@pytest.mark.asyncio
+async def test_rescan_resets_freshness(document_processor, sample_txt_file):
+    await document_processor.scan_and_vectorize()
+    _bump(sample_txt_file)
+    assert not document_processor.check_freshness(force=True).is_current
+    await document_processor.scan_and_vectorize()
+    assert document_processor.check_freshness(force=True).is_current
+
+
+@pytest.mark.asyncio
+async def test_excluded_files_never_count_as_new(document_processor, test_docs_dir, sample_txt_file):
+    await document_processor.scan_and_vectorize()
+    (test_docs_dir / "CLAUDE.md").write_text("instructions")
+    assert document_processor.check_freshness(force=True).is_current
+
+
+@pytest.mark.asyncio
+async def test_freshness_is_cached_unless_forced(document_processor, sample_txt_file):
+    await document_processor.scan_and_vectorize()
+    assert document_processor.check_freshness().is_current
+    _bump(sample_txt_file)
+    assert document_processor.check_freshness().is_current  # cached
+    assert not document_processor.check_freshness(force=True).is_current
+    document_processor.FRESHNESS_CACHE_SECONDS = 0
+    assert not document_processor.check_freshness().is_current
+
+
+@pytest.mark.asyncio
+async def test_file_edited_during_scan_reads_as_stale(document_processor, sample_txt_file):
+    """The stamp is taken before the read, so a mid-scan edit is not hidden"""
+    original = document_processor._extract_text
+
+    async def edit_then_extract(path):
+        text = await original(path)
+        _bump(sample_txt_file)
+        return text
+
+    document_processor._extract_text = edit_then_extract
+    await document_processor.scan_and_vectorize()
+    assert document_processor.check_freshness(force=True).modified == [str(sample_txt_file)]
+
+
+@pytest.mark.asyncio
+async def test_failed_scan_keeps_previous_snapshot(document_processor, test_docs_dir, sample_txt_file):
+    await document_processor.scan_and_vectorize()
+    before = document_processor.snapshot
+
+    async def boom(path):
+        return None
+
+    document_processor._extract_text = boom
+    with pytest.raises(RuntimeError):
+        await document_processor.scan_and_vectorize()
+    assert document_processor.snapshot is before
+
+
+@pytest.mark.asyncio
+async def test_unreadable_file_is_recorded_as_failed(document_processor, test_docs_dir, sample_txt_file):
+    bad = test_docs_dir / "bad.txt"
+    bad.write_text("x")
+    original = document_processor._extract_text
+
+    async def selective(path):
+        return None if path == str(bad) else await original(path)
+
+    document_processor._extract_text = selective
+    await document_processor.scan_and_vectorize()
+    assert document_processor.snapshot.failed == [str(bad)]
+    # Unchanged since the scan: rescanning would not help, so it is not "stale".
+    assert document_processor.check_freshness(force=True).is_current
+
+
+@pytest.mark.asyncio
+async def test_concurrent_scans_are_serialized(document_processor, sample_txt_file):
+    running = 0
+    peak = 0
+    original = document_processor._extract_text
+
+    async def tracked(path):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.01)
+        try:
+            return await original(path)
+        finally:
+            running -= 1
+
+    document_processor._extract_text = tracked
+    await asyncio.gather(
+        document_processor.scan_and_vectorize(), document_processor.scan_and_vectorize()
+    )
+    assert peak == 1
+
+
+def test_format_age():
+    assert format_age(5) == "5s"
+    assert format_age(125) == "2m"
+    assert format_age(3 * 3600 + 5 * 60) == "3h 5m"
+    assert format_age(2 * 86400 + 4 * 3600) == "2d 4h"
+    assert format_age(-3) == "0s"
+
+
+@pytest.mark.asyncio
+async def test_model_note_covers_unscanned_current_and_stale(document_processor, sample_txt_file):
+    assert describe_for_model(None, None) == ""
+    await document_processor.scan_and_vectorize()
+    snap = document_processor.snapshot
+    assert "No source file has changed" in describe_for_model(
+        snap, document_processor.check_freshness(force=True))
+    _bump(sample_txt_file)
+    note = describe_for_model(snap, document_processor.check_freshness(force=True))
+    assert "1 changed since" in note and "rescan" in note
+    # Counts only: no file names go into the prompt note.
+    assert "test.txt" not in note
+
+
+@pytest.mark.asyncio
+async def test_channel_report_hides_names_unless_asked(
+    document_processor, test_docs_dir, sample_txt_file
+):
+    await document_processor.scan_and_vectorize()
+    _bump(sample_txt_file)
+    fresh = document_processor.check_freshness(force=True)
+    snap = document_processor.snapshot
+    args = (document_processor.topic, snap, fresh, str(test_docs_dir))
+    assert "test.txt" not in describe_for_channel(*args, show_names=False)
+    named = describe_for_channel(*args, show_names=True)
+    assert "`test.txt`" in named and "Modified" in named
+    assert "No scan has completed" in describe_for_channel(
+        "t", None, None, str(test_docs_dir), show_names=True)
