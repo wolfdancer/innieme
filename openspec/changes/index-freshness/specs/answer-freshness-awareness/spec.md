@@ -36,9 +36,20 @@ When files have changed since indexing, the model's context SHALL direct it to s
 - **WHEN** an answer relies on an excerpt labelled as changed since indexing
 - **THEN** the model has been told to say the information may be out of date and to suggest a rescan
 
-### Requirement: Freshness failures do not block answers
-If freshness cannot be determined while answering a question, the question SHALL still be answered, without freshness information.
+### Requirement: Freshness failures and delays do not block answers
+If freshness cannot be determined while answering a question, or is not determined within 5 seconds, the question SHALL still be answered, without freshness information.
 
 #### Scenario: Notes directory unavailable
 - **WHEN** the staleness check raises an error during a question
 - **THEN** the answer is produced from the indexed excerpts with no freshness labels or note
+
+#### Scenario: Notes directory hangs
+- **WHEN** the staleness check does not complete within 5 seconds
+- **THEN** the answer is produced without freshness information, without waiting further
+
+### Requirement: Freshness awareness applies on every platform
+Because answers on Discord and Slack share one answering path, chunk labels and the freshness note SHALL appear in the model's context for both. Only the `status` command and rescan reporting are Slack-specific.
+
+#### Scenario: Discord answer
+- **WHEN** a question is answered on Discord after a source file changed
+- **THEN** the model's context carries the same labels and note as on Slack

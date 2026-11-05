@@ -25,17 +25,25 @@ Mentioning the bot with the single word `status` in a channel configured for a t
 - **WHEN** the status check raises an error
 - **THEN** the reply says the status could not be checked and points to the bot logs, without file paths or error text
 
-### Requirement: Status is open to everyone and limits file names
-`status` SHALL be available to any channel member. File names SHALL appear in the reply only when the requester is the topic's outie; everyone else SHALL see counts only. Names SHALL be rendered so they cannot be interpreted as Slack markup or mentions.
+### Requirement: Status is open to everyone; file names are private to the outie
+`status` SHALL be available to any channel member. The reply posted in the channel SHALL contain counts only, whoever asked. When the requester is the topic's outie, the file names SHALL be sent in a separate message visible only to the outie, and SHALL NOT appear in channel history or in the conversation history later given to the model. Names SHALL be rendered so they cannot be interpreted as Slack markup or mentions.
 
 #### Scenario: Non-outie requester
 - **GIVEN** two files changed since the scan
 - **WHEN** a non-outie requests `status`
-- **THEN** the reply reports two changed files and names none
+- **THEN** the channel reply reports two changed files and names none, and no private message is sent
 
 #### Scenario: Outie requester
 - **WHEN** the outie requests `status`
-- **THEN** the reply names the modified, new and removed files, and any files that could not be read
+- **THEN** the channel reply has counts only, and a message visible only to the outie names the modified, new and removed files and any files that could not be read
+
+#### Scenario: Names never reach later model context
+- **WHEN** the outie has requested `status` and a later question in that thread is answered
+- **THEN** the conversation history given to the model contains no file names from the private message
+
+#### Scenario: Private delivery fails
+- **WHEN** the private message to the outie cannot be sent
+- **THEN** the counts-only channel reply is still posted and the names are not posted publicly
 
 #### Scenario: Hostile file name
 - **WHEN** a listed file name contains `<`, `>`, `&` or a backtick

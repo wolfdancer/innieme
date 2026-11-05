@@ -9,11 +9,11 @@ The document index is a snapshot, but nothing records when it was taken or what 
 - Each completed scan records an **index snapshot**: start and end time, read time vs. index time, chunk count, files that could not be read, and an mtime + size stamp for every candidate file.
 - A **staleness check** compares the snapshot with the directory using `stat` only (no re-reading, no embedding) and reports files modified, new, or removed since the scan.
 - The **answering model is told about freshness**: a retrieved chunk whose source changed since indexing is labelled as such, and the system prompt carries a count-only note with the index build time.
-- New Slack mention command **`@bot status`** reports last scan time, duration, file and chunk counts, and freshness. Counts are shown to everyone; file names only to the outie.
+- New Slack mention command **`@bot status`** reports last scan time, duration, file and chunk counts, and freshness. The channel reply shows counts only; file names go to the outie in a private (ephemeral) message.
 - **`@bot rescan` is open to everyone** (previously outie-only) and its reply states how long the scan took. `quit` remains outie-only.
 - Concurrent scans of one topic are **serialized**, since rescan is now open to everyone.
 
-Not changing: scanning, chunking, the vector store, retrieval, or Discord (which has no rescan today).
+Not changing: scanning, chunking, the vector store, or retrieval. Discord gets no new commands (it has no rescan today), but because Discord and Slack share one answering path, Discord answers receive the same chunk labels and freshness note.
 
 ## Capabilities
 
@@ -39,4 +39,4 @@ Not changing: scanning, chunking, the vector store, retrieval, or Discord (which
 - Re-indexing individual files; a rescan still rebuilds the whole index.
 - Persisting the snapshot across restarts (the index is rebuilt at startup).
 - Content hashing; mtime + size is deliberately sufficient.
-- `status` or `rescan` on Discord.
+- `status` or `rescan` commands on Discord (freshness awareness in Discord *answers* is in scope).

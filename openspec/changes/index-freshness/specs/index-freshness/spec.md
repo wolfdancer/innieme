@@ -27,13 +27,21 @@ A file's recorded size and modification time SHALL be captured before its conten
 ### Requirement: Failed scan preserves the previous index state
 A scan that fails SHALL leave both the previously served index and its snapshot unchanged.
 
-#### Scenario: Every candidate unreadable
+#### Scenario: Extraction errors and no text
 - **GIVEN** a topic with a completed snapshot
-- **WHEN** a rescan finds candidate files but can extract text from none of them
+- **WHEN** a rescan hits at least one extraction error and no candidate file supplies any text, including when the other candidates are readable but empty
 - **THEN** the scan fails and the earlier snapshot and index continue to be used
 
+#### Scenario: Only empty files
+- **WHEN** every candidate file is readable but contains no text and none raised an extraction error
+- **THEN** the scan succeeds with zero chunks and records a snapshot, as scanning does today, since an empty file is not a failure
+
+#### Scenario: Some files fail
+- **WHEN** extraction fails for some candidates but at least one candidate supplies text
+- **THEN** the scan succeeds, the failed files are listed in the snapshot, and the rest are indexed
+
 ### Requirement: Staleness is detected by comparison with the directory
-The system SHALL report, for a topic with a snapshot, which indexed files have a different size or modification time than recorded (modified), which candidate files were not in the snapshot (new), and which snapshot files no longer exist (removed). The check SHALL NOT read file contents.
+The system SHALL report, for a topic with a snapshot, which files recorded in the snapshot (indexed, empty or failed alike) have a different size or modification time than recorded (modified), which candidate files were not in the snapshot (new), and which snapshot files no longer exist (removed). The check SHALL NOT read file contents.
 
 #### Scenario: Nothing changed
 - **WHEN** the staleness check runs and no candidate file differs from the snapshot
@@ -56,6 +64,16 @@ The system SHALL report, for a topic with a snapshot, which indexed files have a
 - **WHEN** the file has not changed since the scan
 - **THEN** it is not reported as stale, since rescanning would not help
 
+#### Scenario: Empty file gains content
+- **GIVEN** a readable file that contained no text when scanned
+- **WHEN** it is later edited to contain text
+- **THEN** it is reported as modified
+
+#### Scenario: Failed file repaired
+- **GIVEN** a file that failed text extraction during the scan
+- **WHEN** it is later changed
+- **THEN** it is reported as modified, since a rescan may now succeed
+
 #### Scenario: No snapshot
 - **WHEN** the check runs before any scan has completed
 - **THEN** it reports that freshness is unknown rather than reporting every file as new
@@ -70,6 +88,18 @@ Routine staleness checks made while answering questions MAY reuse a result for u
 #### Scenario: Explicit check
 - **WHEN** a person requests status after a file changed
 - **THEN** the change is reported regardless of any earlier routine check
+
+### Requirement: Freshness is judged against the index the excerpts came from
+Staleness for an answer SHALL be computed against the snapshot that was current when that answer's excerpts were retrieved. A rescan completing during the answer SHALL NOT cause excerpts from the older index to be judged against the newer snapshot, and a staleness result computed for one snapshot SHALL NOT be reused for another.
+
+#### Scenario: Rescan completes mid-answer
+- **GIVEN** excerpts retrieved from index A
+- **WHEN** a rescan publishes index B before the answer's freshness is determined
+- **THEN** the excerpts are judged against A's snapshot, so a file edited between A and B is still labelled changed
+
+#### Scenario: Cached result after a rescan
+- **WHEN** a rescan completes and a routine check follows
+- **THEN** the check reflects the new snapshot, never a result computed for the old one
 
 ### Requirement: Scans of one topic do not overlap
 At most one scan of a given topic SHALL run at a time; a scan requested while another is running SHALL wait for it.
