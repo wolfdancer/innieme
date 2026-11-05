@@ -139,20 +139,52 @@ class DocumentProcessor:
         """
 
         top = self.docs_dir
-        found = list(self._walk(top, strict, (os.path.realpath(top),)))
+        real_top = os.path.realpath(top)
+        found = list(self._walk(top, real_top, strict, (real_top,)))
         files = [f for f in found if not self._is_excluded(f)]
         excluded = [f for f in found if self._is_excluded(f)]
         return files, excluded
 
-    def _walk(self, top: str, strict: bool, ancestors: Tuple[str, ...]):
+    def _wholly_excluded(self, directory: str) -> bool:
+        """Whether every file under ``directory`` is provably excluded.
+
+        Only a pattern that is a literal prefix followed by a final ``*``
+        (``archive/*``, or ``*`` alone) proves it: ``*`` matches any rest of
+        the path, ``/`` included. Anything cleverer (``archive/[!_]*``) could
+        still let a file through, so it is not taken as proof and the strict
+        walk keeps reporting the directory as unreadable.
+        """
+        try:
+            relative = os.path.relpath(directory, self.docs_dir)
+        except ValueError:  # different drive on Windows
+            return False
+        # What every file path under the directory starts with, relative to
+        # docs_dir: nothing for docs_dir itself (relpath gives "."), else the
+        # directory's own path and a separator.
+        descendants = "" if relative == os.curdir else relative + os.sep
+        for pattern in self.docs_exclude:
+            if not pattern.endswith("*"):
+                continue
+            prefix = pattern[:-1]
+            if any(c in prefix for c in "*?["):
+                continue
+            if descendants.startswith(prefix):
+                return True
+        return False
+
+    def _walk(self, top: str, real_top: str, strict: bool, ancestors: Tuple[str, ...]):
         """Yield candidate document paths under ``top``.
 
         Written out rather than ``os.walk``, which swallows a failure to tell
         whether an entry is a directory and silently treats it as a file:
         strict mode has to hear about every directory it could not examine.
 
+        A directory the strict walk cannot examine is still skipped quietly
+        when everything under it is excluded: the topic ignores those files, so
+        they must not make every freshness check fail.
+
         ``ancestors`` holds the real paths of the directories on the way down
-        to ``top``. A directory whose real path is already among them would
+        to ``top`` (``real_top`` is its own). A directory whose real path is already among them would
         recurse forever -- a symlink to an ancestor, or a cycle through
         siblings (``a/to_b -> b``, ``b/to_a -> a``) -- so it is pruned. Any
         other alias is walked, as the glob did, so an excluded alias can never
@@ -162,7 +194,7 @@ class DocumentProcessor:
             with os.scandir(top) as it:
                 entries = list(it)
         except OSError as err:
-            if strict:
+            if strict and not self._wholly_excluded(top):
                 raise
             logger.warning(f"Skipping unreadable directory: {err.filename}")
             return
@@ -172,14 +204,19 @@ class DocumentProcessor:
             try:
                 is_dir = entry.is_dir()  # follows symlinks
             except OSError:
-                if strict:
+                if strict and not self._wholly_excluded(entry.path):
                     raise
                 is_dir = False  # as os.walk and glob treat it
             if is_dir:
-                real = os.path.realpath(entry.path)
+                # Only a symlink can move the real path; anything else is its
+                # parent's real path plus its name, with no extra syscalls.
+                if entry.is_symlink():
+                    real = os.path.realpath(entry.path)
+                else:
+                    real = os.path.join(real_top, entry.name)
                 if real in ancestors:
                     continue
-                yield from self._walk(entry.path, strict, ancestors + (real,))
+                yield from self._walk(entry.path, real, strict, ancestors + (real,))
             elif entry.name.endswith(DOC_EXTENSIONS):
                 yield entry.path
 

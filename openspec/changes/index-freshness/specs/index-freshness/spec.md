@@ -82,6 +82,10 @@ The system SHALL report, for a topic with a snapshot, which files recorded in th
 - **WHEN** a recorded file, or any directory under the topic's documents directory, exists but cannot be read or stat'ed during the check
 - **THEN** freshness is reported as unknown, not as unchanged or removed
 
+#### Scenario: Unreadable directory the topic excludes
+- **WHEN** a directory whose contents all match the topic's exclusion patterns cannot be read during the check
+- **THEN** it is skipped, and freshness is still determined from the rest of the documents
+
 #### Scenario: No snapshot
 - **WHEN** the check runs before any scan has completed
 - **THEN** it reports that freshness is unknown rather than reporting every file as new

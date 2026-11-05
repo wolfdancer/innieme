@@ -1076,3 +1076,171 @@ async def test_failed_worker_exceptions_are_always_retrieved(
     finally:
         loop.set_exception_handler(previous)
     assert not [c for c in reported if "never retrieved" in str(c.get("message", ""))]
+
+
+@pytest.mark.asyncio
+async def test_repeated_routine_timeouts_attach_nothing_to_the_stuck_worker(
+    document_processor, sample_txt_file
+):
+    await document_processor.scan()
+    snap = document_processor.snapshot
+    document_processor.ROUTINE_CHECK_TIMEOUT = 0.02
+    gate, calls = _blocking_compute(document_processor)
+    try:
+        assert await document_processor.routine_freshness(snap) is None
+        worker = document_processor._inflight[1]
+        baseline = len(worker._callbacks)
+        for _ in range(5):
+            assert await document_processor.routine_freshness(snap) is None
+        assert len(worker._callbacks) == baseline
+        assert len(calls) == 1
+    finally:
+        gate.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
+async def test_unreadable_excluded_directory_does_not_break_freshness(test_docs_dir):
+    """Files the topic ignores must not make every check 'could not be determined'"""
+    (test_docs_dir / "note.md").write_text("kept")
+    archive = test_docs_dir / "archive"
+    archive.mkdir()
+    (archive / "old.md").write_text("ignored")
+    processor = DocumentProcessor(
+        "testing",
+        str(test_docs_dir),
+        ExistingEmbeddingsFactory(FakeEmbeddings()),
+        ChromaVectorStoreFactory(),
+        docs_exclude=["archive/*"],
+    )
+    await processor.scan()
+    os.chmod(archive, 0)
+    try:
+        assert (await processor.explicit_freshness()).is_current
+        assert (await processor.routine_freshness(processor.snapshot)).is_current
+    finally:
+        os.chmod(archive, 0o755)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
+async def test_unreadable_partly_excluded_directory_is_still_unknown(test_docs_dir):
+    """A file-type exclusion does not cover a whole directory"""
+    (test_docs_dir / "note.md").write_text("kept")
+    sub = test_docs_dir / "mixed"
+    sub.mkdir()
+    (sub / "kept.md").write_text("kept")
+    processor = DocumentProcessor(
+        "testing",
+        str(test_docs_dir),
+        ExistingEmbeddingsFactory(FakeEmbeddings()),
+        ChromaVectorStoreFactory(),
+        docs_exclude=["*.pdf"],
+    )
+    await processor.scan()
+    os.chmod(sub, 0)
+    try:
+        with pytest.raises(FreshnessUnavailable):
+            await processor.explicit_freshness()
+    finally:
+        os.chmod(sub, 0o755)
+
+
+def test_walk_through_symlink_keeps_real_paths(
+    document_processor, test_docs_dir, tmp_path
+):
+    """Directories below a symlink resolve under its target, so cycles there are caught"""
+    outside = tmp_path / "outside"
+    (outside / "deep").mkdir(parents=True)
+    (outside / "deep" / "x.md").write_text("x")
+    (outside / "deep" / "back").symlink_to(outside, target_is_directory=True)
+    (test_docs_dir / "link").symlink_to(outside, target_is_directory=True)
+    files, _ = document_processor._discover_files(strict=True)
+    assert files == [str(test_docs_dir / "link" / "deep" / "x.md")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
+async def test_unreadable_directory_with_a_selective_exclusion_is_unknown(
+    test_docs_dir,
+):
+    """archive/[!_]* matches most names but lets _new.md through: not proof"""
+    (test_docs_dir / "note.md").write_text("kept")
+    archive = test_docs_dir / "archive"
+    archive.mkdir()
+    processor = DocumentProcessor(
+        "testing",
+        str(test_docs_dir),
+        ExistingEmbeddingsFactory(FakeEmbeddings()),
+        ChromaVectorStoreFactory(),
+        docs_exclude=["archive/[!_]*"],
+    )
+    await processor.scan()
+    (archive / "_new.md").write_text("not excluded, not yet indexed")
+    os.chmod(archive, 0)
+    try:
+        with pytest.raises(FreshnessUnavailable):
+            await processor.explicit_freshness()
+    finally:
+        os.chmod(archive, 0o755)
+
+
+def test_wholly_excluded_needs_a_literal_prefix_and_final_star(test_docs_dir):
+    def processor(patterns):
+        return DocumentProcessor(
+            "testing",
+            str(test_docs_dir),
+            ExistingEmbeddingsFactory(FakeEmbeddings()),
+            ChromaVectorStoreFactory(),
+            docs_exclude=patterns,
+        )
+
+    archive = str(test_docs_dir / "archive")
+    nested = str(test_docs_dir / "archive" / "2024")
+    assert processor(["archive/*"])._wholly_excluded(archive)
+    assert processor(["archive/*"])._wholly_excluded(nested)
+    assert processor(["*"])._wholly_excluded(archive)
+    assert not processor(["archive/[!_]*"])._wholly_excluded(archive)
+    assert not processor(["archive/*.md"])._wholly_excluded(archive)
+    assert not processor(["*.pdf"])._wholly_excluded(archive)
+    assert not processor(["CLAUDE.md"])._wholly_excluded(archive)
+    assert not processor(["archive2/*"])._wholly_excluded(archive)
+
+
+def test_wholly_excluded_root_needs_a_bare_star(test_docs_dir):
+    """relpath gives '.' for docs_dir itself; '.*' must not prove it excluded"""
+
+    def processor(patterns):
+        return DocumentProcessor(
+            "testing",
+            str(test_docs_dir),
+            ExistingEmbeddingsFactory(FakeEmbeddings()),
+            ChromaVectorStoreFactory(),
+            docs_exclude=patterns,
+        )
+
+    root = str(test_docs_dir)
+    assert not processor([".*"])._wholly_excluded(root)
+    assert not processor(["./*"])._wholly_excluded(root)
+    assert not processor(["archive/*"])._wholly_excluded(root)
+    assert processor(["*"])._wholly_excluded(root)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
+async def test_unreadable_root_is_unknown_despite_dotfile_exclusion(test_docs_dir):
+    processor = DocumentProcessor(
+        "testing",
+        str(test_docs_dir),
+        ExistingEmbeddingsFactory(FakeEmbeddings()),
+        ChromaVectorStoreFactory(),
+        docs_exclude=[".*"],
+    )
+    await processor.scan()  # empty corpus
+    (test_docs_dir / "note.md").write_text("new, allowed, not yet indexed")
+    os.chmod(test_docs_dir, 0)
+    try:
+        with pytest.raises(FreshnessUnavailable):
+            await processor.explicit_freshness()
+    finally:
+        os.chmod(test_docs_dir, 0o755)

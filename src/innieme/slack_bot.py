@@ -780,9 +780,11 @@ class SlackBot:
     ):
         """Re-scan and re-vectorize the topic's documents.
 
-        Safe to run on a live bot: scan_and_vectorize() builds a fresh, uniquely
-        named collection and replaces the topic's vector store, so re-running
-        rebuilds the index rather than appending a second copy of every chunk.
+        Safe to run on a live bot: Topic.scan() builds a fresh, uniquely named
+        collection and publishes it with its snapshot only if the scan
+        succeeds, so re-running rebuilds the index rather than appending a
+        second copy of every chunk, and a failed scan leaves the old pair
+        serving. Concurrent rescans of a topic are serialized.
         """
         logger.info(f"Rescanning documents for topic: {topic.config.name}")
         await self._set_working(channel_id, message_ts, True)

@@ -62,9 +62,11 @@ first can fail the build), then `uv run pytest`.
    a PydanticAI `Agent` whose system prompt is built from `ConversationDependencies` (topic `role`
    + matched doc chunks + thread conversation history). Chunks are rendered by
    `conversation_engine._format_chunk()`, which prefixes each with `[source: <basename>]` so the
-   model can attribute an answer to a file. When `retrieval_score_threshold` is set,
-   `search_documents()` scores results and drops those below the floor, falling back to an
-   unfiltered search if the store cannot produce relevance scores.
+   model can attribute an answer to a file. Retrieval goes through `search_with_snapshot()`, which
+   returns the excerpts together with the snapshot of the index they came from (see *Index
+   freshness*); `search_documents()` is its excerpts-only wrapper. When
+   `retrieval_score_threshold` is set, retrieval scores results and drops those below the floor,
+   falling back to an unfiltered search if the store cannot produce relevance scores.
 4. The LLM is configurable via `llm_model` (default `openai:gpt-5.6-terra`); the provider/model
    string and `llm_api_key` are resolved in `conversation_engine._build_model()`.
 
