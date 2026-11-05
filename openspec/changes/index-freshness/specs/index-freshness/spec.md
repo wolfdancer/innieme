@@ -78,6 +78,10 @@ The system SHALL report, for a topic with a snapshot, which files recorded in th
 - **WHEN** it is later changed
 - **THEN** it is reported as modified, since a rescan may now succeed
 
+#### Scenario: File cannot be examined
+- **WHEN** a recorded file, or any directory under the topic's documents directory, exists but cannot be read or stat'ed during the check
+- **THEN** freshness is reported as unknown, not as unchanged or removed
+
 #### Scenario: No snapshot
 - **WHEN** the check runs before any scan has completed
 - **THEN** it reports that freshness is unknown rather than reporting every file as new

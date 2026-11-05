@@ -1,15 +1,21 @@
-from .slack_bot_config import SlackBotConfig
-from .innie import Innie, Topic
-
-from slack_bolt.async_app import AsyncApp
-from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-from slack_sdk.web.async_client import AsyncWebClient
-
-import logging
 import asyncio
+import logging
 import re
 from collections import defaultdict
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
+from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+from slack_bolt.async_app import AsyncApp
+from slack_sdk.web.async_client import AsyncWebClient
+
+from .index_status import (
+    FreshnessUnavailable,
+    describe_for_channel,
+    describe_names,
+    format_duration,
+)
+from .innie import Innie, Topic
+from .slack_bot_config import SlackBotConfig
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +51,14 @@ WORKING_REACTION = "thinking_face"
 # rather than slash commands because a slash command has to be declared in the
 # Slack app config as well as here, so it cannot ship in code alone.
 #
-# "quit" and "rescan" act on the channel's topic and are outie-only. "hello" is
-# an information card: no topic required and open to everyone, matching the
-# /hello slash command it replaces.
-BOT_COMMANDS = frozenset({"quit", "rescan", "hello"})
+# "quit" shuts the bot down and is outie-only. "rescan" and "status" act on the
+# channel's topic and are open to everyone: a rescan only rebuilds the index from
+# the same files and concurrent ones are serialized, and "status" posts counts
+# only, with file names going privately to the outie. "hello" is an information
+# card: no topic required and open to everyone, matching the /hello slash
+# command it replaces.
+BOT_COMMANDS = frozenset({"quit", "rescan", "status", "hello"})
+OUTIE_ONLY_COMMANDS = frozenset({"quit"})
 
 # Both mention forms Slack markup allows: the bare "<@U123>" and the labelled
 # "<@U123|name>". The ID is captured so the same pattern answers "was the bot
@@ -70,9 +80,7 @@ _NON_AUTHORED_BLOCK_TYPES = frozenset({"context"})
 # from a message that was never a command -- "@InnieMe quit please?" would
 # become "@InnieMe quit" and shut the bot down. A new integration's wording
 # belongs here as another alternative.
-_ATTRIBUTION_TRAILER_RE = re.compile(
-    r"\*Sent using\*\s*<@[UWB][A-Z0-9]*(?:\|[^>]*)?>"
-)
+_ATTRIBUTION_TRAILER_RE = re.compile(r"\*Sent using\*\s*<@[UWB][A-Z0-9]*(?:\|[^>]*)?>")
 
 
 def _attribution_text(block: Dict[str, Any]) -> str:
@@ -151,6 +159,48 @@ def parse_bot_command(text: str, bot_user_id: str) -> Optional[str]:
     return word if word in BOT_COMMANDS else None
 
 
+# Block Kit caps a plain_text object at 3,000 characters.
+_PLAIN_TEXT_LIMIT = 3000
+
+
+def _plain_text_blocks(text: str) -> List[Dict[str, Any]]:
+    """``text`` as plain_text sections, which Slack shows exactly as written.
+
+    File names are untrusted: in mrkdwn, ``<!channel>`` would ping and ``*``
+    or a backtick would reformat them, and escaping or replacing characters
+    would change the name being reported. plain_text parses nothing. A long
+    report is split across sections at line breaks -- never truncated, so no
+    name is cut and no group dropped -- and a single over-long line is split
+    at the limit.
+    """
+    chunks: List[str] = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > _PLAIN_TEXT_LIMIT:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:_PLAIN_TEXT_LIMIT])
+            line = line[_PLAIN_TEXT_LIMIT:]
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > _PLAIN_TEXT_LIMIT:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return [
+        {"type": "section", "text": {"type": "plain_text", "text": c, "emoji": False}}
+        for c in chunks
+    ]
+
+
+# Fallback for notifications and clients that cannot render blocks. It names no
+# files, so nothing untrusted is ever interpreted as mrkdwn.
+STATUS_NAMES_FALLBACK = "File names behind the status counts (only you can see this)"
+
+
 # Slack recommends keeping a message under 4,000 characters and truncates at
 # 40,000. Sit a little under the recommendation for headroom.
 SLACK_MESSAGE_LIMIT = 3900
@@ -219,30 +269,30 @@ def hello_blocks() -> List[Dict[str, Any]]:
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "InnieMe: Your Knowledge Speaks for Itself"
-            }
+                "text": "InnieMe: Your Knowledge Speaks for Itself",
+            },
         },
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "Democratizes access to AI-powered Q&A capabilities\n\n*Pricing:* Free during early access\n*Key Feature:* Ask and you shall receive\n*Deployment:* Channel specific"
+                "text": "Democratizes access to AI-powered Q&A capabilities\n\n*Pricing:* Free during early access\n*Key Feature:* Ask and you shall receive\n*Deployment:* Channel specific",
             },
             "accessory": {
                 "type": "image",
                 "image_url": "https://repository-images.githubusercontent.com/956066438/8dce1cee-0386-423d-817c-283e3dfb7288",
-                "alt_text": "InnieMe logo"
-            }
+                "alt_text": "InnieMe logo",
+            },
         },
         {
             "type": "context",
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": "*InnieMe © 2025* | <https://github.com/wolfdancer/innieme|GitHub>"
+                    "text": "*InnieMe © 2025* | <https://github.com/wolfdancer/innieme|GitHub>",
                 }
-            ]
-        }
+            ],
+        },
     ]
 
 
@@ -342,7 +392,7 @@ class SlackBot:
         # reason as the handler: an asyncio.Event binds to the running loop.
         self._shutdown: Optional[asyncio.Event] = None
 
-        # Innies setup        
+        # Innies setup
         self.innies = [Innie(outie_config) for outie_config in config.outies]
         # Channel->Topic mapping
         self.channels: defaultdict[str, List[Topic]] = defaultdict(list)
@@ -350,31 +400,35 @@ class SlackBot:
             for topic in innie.topics:
                 for channel_config in topic.config.channels:
                     self.channels[channel_config.channel_id].append(topic)
-        
+
         # Register event handlers and commands
         self._register_events()
         self._register_commands()
 
     def _register_events(self):
         """Register all event handlers"""
+
         @self.app.event("app_mention")
         async def handle_app_mention(event, say, client):
             await self.handle_mention(event, say, client)
-        
+
         @self.app.event("message")
         async def handle_message(event, say, client):
             # Only handle direct messages and thread replies where the bot was previously mentioned
-            if event.get("channel_type") == "im" or self._should_respond_to_thread(event):
+            if event.get("channel_type") == "im" or self._should_respond_to_thread(
+                event
+            ):
                 await self.handle_message(event, say, client)
 
     def _register_commands(self):
         """Register all slash commands"""
+
         @self.app.command("/approve")
         async def approve_command(ack, command, client):
             await ack()
             await self.approve_summary(command, client)
-                    
-        # "quit", "rescan" and "hello" are mention commands (see
+
+        # "quit", "rescan", "status" and "hello" are mention commands (see
         # parse_bot_command), not slash commands: they need no Slack-side app
         # configuration to work.
 
@@ -388,38 +442,35 @@ class SlackBot:
         thread_ts = event.get("thread_ts")
         if not thread_ts:
             return False
-        
+
         # Check if this thread involves the bot
         topic = self._identify_topic(event["channel"])
         if topic:
             return topic.is_following_thread(thread_ts)
-        
+
         return False
 
-    async def get_thread_context(self, channel_id: str, thread_ts: str, limit: int = 10) -> List[Dict[str, str]]:
+    async def get_thread_context(
+        self, channel_id: str, thread_ts: str, limit: int = 10
+    ) -> List[Dict[str, str]]:
         """Get recent messages from the thread for context"""
         messages = []
         try:
             # Get thread messages
             result = await self.client.conversations_replies(
-                channel=channel_id,
-                ts=thread_ts,
-                limit=limit
+                channel=channel_id, ts=thread_ts, limit=limit
             )
-            
+
             bot_user_id = (await self.client.auth_test())["user_id"]
-            
+
             for message in result["messages"]:
                 if "text" in message:
                     role = "assistant" if message["user"] == bot_user_id else "user"
                     # Same normalisation as a live event: an earlier message sent
                     # through an integration would otherwise carry its "*Sent
                     # using* @Claude" trailer into the conversation history.
-                    messages.append({
-                        "role": role,
-                        "content": authored_text(message)
-                    })
-            
+                    messages.append({"role": role, "content": authored_text(message)})
+
             return messages
         except Exception as e:
             logger.error(f"Error fetching thread context: {e}")
@@ -429,9 +480,7 @@ class SlackBot:
         """Send a response to a channel or thread"""
         try:
             await self.client.chat_postMessage(
-                channel=channel_id,
-                text=text,
-                thread_ts=thread_ts
+                channel=channel_id, text=text, thread_ts=thread_ts
             )
         except Exception as e:
             logger.error(f"Error sending message: {e}")
@@ -450,14 +499,14 @@ class SlackBot:
             return
         action = self.client.reactions_add if working else self.client.reactions_remove
         try:
-            await action(
-                channel=channel_id, name=WORKING_REACTION, timestamp=timestamp
-            )
+            await action(channel=channel_id, name=WORKING_REACTION, timestamp=timestamp)
         except Exception as e:
             # already_reacted / no_reaction are normal races, not problems.
             logger.debug(f"Could not {'add' if working else 'remove'} reaction: {e}")
 
-    async def _post_response(self, channel_id: str, response: str, thread_ts: str = None):
+    async def _post_response(
+        self, channel_id: str, response: str, thread_ts: str = None
+    ):
         """Post a response, split across messages when it is too long for one.
 
         Slack recommends keeping a message under 4,000 characters (it truncates
@@ -466,12 +515,17 @@ class SlackBot:
         """
         for part in split_for_slack(markdown_to_mrkdwn(response)):
             await self.client.chat_postMessage(
-                channel=channel_id,
-                text=part,
-                thread_ts=thread_ts
+                channel=channel_id, text=part, thread_ts=thread_ts
             )
 
-    async def process_and_respond(self, topic: Topic, channel_id: str, query: str, thread_id: str, thread_ts: str = None):
+    async def process_and_respond(
+        self,
+        topic: Topic,
+        channel_id: str,
+        query: str,
+        thread_id: str,
+        thread_ts: str = None,
+    ):
         """Process a query and respond in the channel"""
         context_messages = []
         if thread_ts:
@@ -482,16 +536,18 @@ class SlackBot:
         try:
             await self._set_working(channel_id, thread_ts, True)
 
-            response = await topic.process_query(thread_id, query, context_messages=context_messages)
+            response = await topic.process_query(
+                thread_id, query, context_messages=context_messages
+            )
 
             await self._post_response(channel_id, response, thread_ts)
 
         except Exception as e:
-            error_message = f"Sorry, I encountered an error while processing your request: {str(e)}"
+            error_message = (
+                f"Sorry, I encountered an error while processing your request: {str(e)}"
+            )
             await self.client.chat_postMessage(
-                channel=channel_id,
-                text=error_message,
-                thread_ts=thread_ts
+                channel=channel_id, text=error_message, thread_ts=thread_ts
             )
             raise  # Re-raise the exception for logging/debugging
         finally:
@@ -534,14 +590,14 @@ class SlackBot:
         # form, and drop any integration trailer with it: neither is part of what
         # was asked. Other people's mentions stay -- they are often the subject.
         clean_text = _strip_bot_mention(authored_text(event), bot_user_id).strip()
-        
+
         # Start a thread and process the query
         await self.process_and_respond(
             topic,
             channel_id,
             clean_text,
             ts,  # Use timestamp as thread_id
-            ts   # Use timestamp as thread_ts for threading
+            ts,  # Use timestamp as thread_ts for threading
         )
 
     async def handle_message(self, event: Dict[str, Any], say, client: AsyncWebClient):
@@ -554,7 +610,7 @@ class SlackBot:
         text = authored_text(event)
         ts = event["ts"]
         thread_ts = event.get("thread_ts")
-        
+
         # Skip bot's own messages
         bot_user_id = (await client.auth_test())["user_id"]
         if user_id == bot_user_id:
@@ -586,50 +642,57 @@ class SlackBot:
                     thread_ts,
                 )
             return
-        
+
         # Handle consultation requests
         if "please consult outie" in text.lower():
             if thread_ts:
                 await client.chat_postMessage(
                     channel=channel_id,
                     text=f"<@{outie_id}> Your consultation has been requested in this thread.",
-                    thread_ts=thread_ts
+                    thread_ts=thread_ts,
                 )
             return
-        
+
         # Handle thread responses
         if thread_ts and topic.is_following_thread(thread_ts):
             await self.process_and_respond(
-                topic,
-                channel_id,
-                text,
-                thread_ts,
-                thread_ts
+                topic, channel_id, text, thread_ts, thread_ts
             )
 
-    async def run_bot_command(self, command: str, topic: Topic, event: Dict[str, Any], client: AsyncWebClient):
-        """Run a mention command ("quit", "rescan") on behalf of the outie."""
+    async def run_bot_command(
+        self, command: str, topic: Topic, event: Dict[str, Any], client: AsyncWebClient
+    ):
+        """Run a mention command ("quit", "rescan", "status")."""
         channel_id = event["channel"]
         # Reply in the mention's own thread. Falling back to the message ts
         # mirrors handle_mention, which threads a top-level mention under itself.
         thread_ts = event.get("thread_ts") or event["ts"]
         outie_id = topic.outie_config.outie_id
 
-        if event.get("user") != outie_id:
+        if command in OUTIE_ONLY_COMMANDS and event.get("user") != outie_id:
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
-                text=f"`{command}` is only available to the outie (<@{outie_id}>)."
+                text=f"`{command}` is only available to the outie (<@{outie_id}>).",
             )
             return
 
         if command == "rescan":
             await self.rescan(topic, channel_id, event["ts"], thread_ts)
+        elif command == "status":
+            await self.post_status(
+                topic,
+                channel_id,
+                event["ts"],
+                thread_ts,
+                event.get("user"),
+                is_outie=event.get("user") == outie_id,
+            )
         elif command == "quit":
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
-                text="Goodbye! Bot shutting down..."
+                text="Goodbye! Bot shutting down...",
             )
             await self.stop()
 
@@ -643,10 +706,78 @@ class SlackBot:
             channel=channel_id,
             thread_ts=thread_ts,
             text=HELLO_FALLBACK_TEXT,
-            blocks=hello_blocks()
+            blocks=hello_blocks(),
         )
 
-    async def rescan(self, topic: Topic, channel_id: str, message_ts: str, thread_ts: str):
+    async def post_status(
+        self,
+        topic: Topic,
+        channel_id: str,
+        message_ts: str,
+        thread_ts: str,
+        user_id: Optional[str],
+        is_outie: bool,
+    ):
+        """Report the index's age, scan timing, counts and freshness.
+
+        The channel reply is counts only, whoever asked: everyone can read it,
+        and it is read back into the model's conversation history. File names
+        go to the outie as an ephemeral message, which is in neither channel
+        history nor the thread replies the bot reads back.
+        """
+        await self._set_working(channel_id, message_ts, True)
+        try:
+            names = None
+            try:
+                snapshot = topic.index_snapshot
+                freshness, unavailable = None, False
+                if snapshot is not None:
+                    try:
+                        freshness = await topic.explicit_freshness()
+                    except FreshnessUnavailable:
+                        logger.exception(
+                            f"Freshness check failed for topic {topic.config.name}"
+                        )
+                        unavailable = True
+                text = describe_for_channel(
+                    topic.config.name,
+                    snapshot,
+                    freshness,
+                    freshness_unavailable=unavailable,
+                )
+                if is_outie:
+                    names = describe_names(
+                        snapshot, freshness, topic.config.docs_dir, quote=str
+                    )
+            except Exception:
+                # Same discretion as a failed rescan: paths and error text stay
+                # out of the channel.
+                logger.exception(f"Status report failed for topic {topic.config.name}")
+                text = "I couldn't check the index status; details are in the bot logs."
+            await self.client.chat_postMessage(
+                channel=channel_id, thread_ts=thread_ts, text=text
+            )
+            if names and user_id:
+                try:
+                    await self.client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        thread_ts=thread_ts,
+                        text=STATUS_NAMES_FALLBACK,
+                        blocks=_plain_text_blocks(names),
+                    )
+                except Exception:
+                    # The counts are already posted; the names are simply not
+                    # shown -- never fall back to posting them publicly.
+                    logger.exception(
+                        "Could not send the private status names to the outie"
+                    )
+        finally:
+            await self._set_working(channel_id, message_ts, False)
+
+    async def rescan(
+        self, topic: Topic, channel_id: str, message_ts: str, thread_ts: str
+    ):
         """Re-scan and re-vectorize the topic's documents.
 
         Safe to run on a live bot: scan_and_vectorize() builds a fresh, uniquely
@@ -659,7 +790,7 @@ class SlackBot:
             await self.client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
-                text=await self._rescan_and_describe(topic)
+                text=await self._rescan_and_describe(topic),
             )
         finally:
             await self._set_working(channel_id, message_ts, False)
@@ -672,7 +803,7 @@ class SlackBot:
         still serving when the new one actually loaded.
         """
         try:
-            return f"Rescan complete. {await topic.scan_and_vectorize()}"
+            result = await topic.scan()
         except Exception:
             logger.exception(f"Rescan failed for topic {topic.config.name}")
             # The exception text stays out of the channel: it routinely carries
@@ -683,14 +814,19 @@ class SlackBot:
             # naming them. The previous index is still serving, though, which the
             # outie does need to know -- otherwise a failure reads as an emptied
             # knowledge base.
-            return ("Rescan failed; details are in the bot logs. "
-                    "Still answering from the previously loaded documents.")
+            return (
+                "Rescan failed; details are in the bot logs. "
+                "Still answering from the previously loaded documents."
+            )
+        # This scan's own runtime, from its own result: a rescan that queued
+        # behind another must not report its neighbour's figures or its wait.
+        return f"Rescan complete in {format_duration(result.snapshot.duration)}. {result.message}"
 
     async def connect_and_prepare(self, topic: Topic):
         """Connect to channels and prepare documents"""
         outie_id = topic.outie_config.outie_id
         channels = []
-        
+
         for channel_config in topic.config.channels:
             channel_id = channel_config.channel_id
             try:
@@ -699,7 +835,7 @@ class SlackBot:
                 channels.append(channel_id)
                 await self.client.chat_postMessage(
                     channel=channel_id,
-                    text=f"Bot is connected, preparing documents for {topic.config.name}..."
+                    text=f"Bot is connected, preparing documents for {topic.config.name}...",
                 )
             except Exception as e:
                 logger.error(f"Could not connect to channel {channel_id}: {e}")
@@ -707,38 +843,36 @@ class SlackBot:
                 try:
                     await self.client.chat_postMessage(
                         channel=outie_id,
-                        text=f"Bot is now online but could not access channel <#{channel_id}>. Please make sure the bot is invited to the channel."
+                        text=f"Bot is now online but could not access channel <#{channel_id}>. Please make sure the bot is invited to the channel.",
                     )
                 except Exception as dm_e:
                     logger.error(f"Could not send DM to outie {outie_id}: {dm_e}")
-        
+
         # Scan and vectorize documents
         scanning_result = await topic.scan_and_vectorize()
-        
+
         # Notify channels of completion
         for channel_id in channels:
             mention = f"(fyi <@{outie_id}>)"
             await self.client.chat_postMessage(
-                channel=channel_id,
-                text=f"{scanning_result} {mention}"
+                channel=channel_id, text=f"{scanning_result} {mention}"
             )
 
     async def approve_summary(self, command: Dict[str, Any], client: AsyncWebClient):
         """Handle summary approval"""
         channel_id = command["channel_id"]
         user_id = command["user_id"]
-        
+
         topic = self._identify_topic(channel_id)
         if not topic:
             return
-        
+
         outie_id = topic.outie_config.outie_id
         if user_id == outie_id:
             # This would need thread_ts to identify which summary to approve
             # For now, we'll use a simple implementation
             await client.chat_postMessage(
-                channel=channel_id,
-                text="Summary approved and added to knowledge base."
+                channel=channel_id, text="Summary approved and added to knowledge base."
             )
             # TODO: Implement actual summary storage with thread tracking
 

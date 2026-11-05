@@ -1,9 +1,9 @@
+import asyncio
 import fnmatch
-import glob
 import logging
 import os
 import time
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import docx
 import pypdf
@@ -12,6 +12,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import SecretStr
 
 from .embeddings_factory import EmbeddingsFactory
+from .index_status import (
+    FileStamp,
+    FreshnessUnavailable,
+    IndexFreshness,
+    IndexSnapshot,
+    PublishedIndex,
+    ScanResult,
+    compare,
+)
 from .vector_store_factory import VectorStoreFactory
 
 logger = logging.getLogger(__name__)
@@ -22,8 +31,20 @@ logger = logging.getLogger(__name__)
 # answering the question.
 DEFAULT_DOCS_EXCLUDE = ["CLAUDE.md"]
 
+# File types the scanner reads. Matched case-sensitively, as the per-extension
+# globs this replaced were.
+DOC_EXTENSIONS = (".pdf", ".docx", ".txt", ".md")
+
 
 class DocumentProcessor:
+    # How long a routine (answer-time) freshness result is reused. 0 disables.
+    FRESHNESS_CACHE_SECONDS = 30
+    # How long an answer waits for a freshness check before going on without.
+    ROUTINE_CHECK_TIMEOUT = 5.0
+    # Total time an explicit check (``status``) may take, including waiting for
+    # a routine check already in flight.
+    EXPLICIT_CHECK_TIMEOUT = 10.0
+
     def __init__(
         self,
         topic: str,
@@ -43,6 +64,31 @@ class DocumentProcessor:
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=200
         )
+        # The store and the snapshot describing it, published together by a
+        # scan that succeeds so no reader sees one without the other. A failed
+        # scan leaves the previous pair in place.
+        self._index: Optional[PublishedIndex] = None
+        # Rescan is open to everyone, so two can arrive at once; each would
+        # embed every document and the slower would win. Serialize them.
+        self._scan_lock = asyncio.Lock()
+        # Last routine freshness result, valid only for its own snapshot.
+        self._freshness_cache: Optional[IndexFreshness] = None
+        # The one routine check allowed in flight, and the snapshot it is for.
+        self._inflight: Optional[Tuple[IndexSnapshot, "asyncio.Future"]] = None
+
+    @property
+    def vectorstore(self):
+        return self._index.store if self._index else None
+
+    @vectorstore.setter
+    def vectorstore(self, store):
+        # Kept for callers and tests that set the store directly: it keeps the
+        # current snapshot, so the pair stays a pair.
+        self._index = PublishedIndex(store=store, snapshot=self.snapshot)
+
+    @property
+    def snapshot(self) -> Optional[IndexSnapshot]:
+        return self._index.snapshot if self._index else None
 
     def _is_excluded(self, file_path: str) -> bool:
         """Whether a scanned file matches an exclusion pattern.
@@ -78,22 +124,90 @@ class DocumentProcessor:
         timestamp = int(time.time() * 1000)  # Milliseconds since epoch
         return f"{safe_topic}_{timestamp}"
 
-    async def scan_and_vectorize(self) -> str:
-        """Scan all documents in the specified directory and create vector embeddings"""
-        document_texts = []
+    def _discover_files(self, strict: bool = False) -> Tuple[List[str], List[str]]:
+        """Candidate files under ``docs_dir``, split into (kept, excluded).
 
-        # Get all files with common document extensions
-        found = []
-        for ext in ["*.pdf", "*.docx", "*.txt", "*.md"]:
-            found.extend(
-                glob.glob(os.path.join(self.docs_dir, "**", ext), recursive=True)
-            )
+        One walk, shared by the scan and the staleness check so both see the
+        same candidates: supported extensions only, hidden files and
+        directories skipped, directory symlinks followed except one pointing
+        back up the tree (which would recurse forever).
 
+        ``strict`` raises on a directory that cannot be listed. The scan skips
+        one, as the glob it replaced did; the staleness check must not, because
+        a directory it cannot read would otherwise make its new files invisible
+        and its indexed files look deleted.
+        """
+
+        top = self.docs_dir
+        found = list(self._walk(top, strict, (os.path.realpath(top),)))
         files = [f for f in found if not self._is_excluded(f)]
         excluded = [f for f in found if self._is_excluded(f)]
+        return files, excluded
+
+    def _walk(self, top: str, strict: bool, ancestors: Tuple[str, ...]):
+        """Yield candidate document paths under ``top``.
+
+        Written out rather than ``os.walk``, which swallows a failure to tell
+        whether an entry is a directory and silently treats it as a file:
+        strict mode has to hear about every directory it could not examine.
+
+        ``ancestors`` holds the real paths of the directories on the way down
+        to ``top``. A directory whose real path is already among them would
+        recurse forever -- a symlink to an ancestor, or a cycle through
+        siblings (``a/to_b -> b``, ``b/to_a -> a``) -- so it is pruned. Any
+        other alias is walked, as the glob did, so an excluded alias can never
+        hide its allowed target.
+        """
+        try:
+            with os.scandir(top) as it:
+                entries = list(it)
+        except OSError as err:
+            if strict:
+                raise
+            logger.warning(f"Skipping unreadable directory: {err.filename}")
+            return
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            try:
+                is_dir = entry.is_dir()  # follows symlinks
+            except OSError:
+                if strict:
+                    raise
+                is_dir = False  # as os.walk and glob treat it
+            if is_dir:
+                real = os.path.realpath(entry.path)
+                if real in ancestors:
+                    continue
+                yield from self._walk(entry.path, strict, ancestors + (real,))
+            elif entry.name.endswith(DOC_EXTENSIONS):
+                yield entry.path
+
+    async def scan_and_vectorize(self) -> str:
+        """Scan and vectorize, returning only the channel message.
+
+        Kept for the startup callers; ``scan()`` also returns the snapshot.
+        """
+        return (await self.scan()).message
+
+    async def scan(self) -> ScanResult:
+        """Scan all documents in the directory and create vector embeddings.
+
+        Returns this scan's own message and snapshot, so a caller that queued
+        behind another scan reports its own figures, not its neighbour's.
+        """
+        async with self._scan_lock:
+            return await self._scan()
+
+    async def _scan(self) -> ScanResult:
+        started_at = time.time()
+        started = time.monotonic()
+        document_texts = []
+
+        files, excluded = self._discover_files()
 
         logger.info(
-            f"For {self.topic}: Found {len(found)}, excluded {len(excluded)}, "
+            f"For {self.topic}: Found {len(files) + len(excluded)}, excluded {len(excluded)}, "
             f"processing {len(files)} under {self.docs_dir}..."
         )
         # Log exclusions explicitly: a file silently missing from the knowledge
@@ -102,14 +216,25 @@ class DocumentProcessor:
             logger.info(f"  - skipped (excluded): {os.path.basename(file_path)}")
         # Process each file based on its type
         count = 0
-        failures = 0
+        failed: List[str] = []
+        stamps: Dict[str, FileStamp] = {}
         for file_path in files:
             logger.info(f"  - {file_path}")
+            # Stamped before reading, so an edit that lands mid-scan compares as
+            # changed afterwards instead of hiding behind a newer stamp.
+            stamp = FileStamp.of(file_path)
+            if stamp is None:
+                # Vanished or unreadable between discovery and now: a failure,
+                # recorded without a stamp.
+                logger.error(f"    Could not stat {file_path}")
+                failed.append(file_path)
+                continue
+            stamps[file_path] = stamp
             text = await self._extract_text(file_path)
             if text is None:
                 # _extract_text logs the cause and returns None.
                 logger.error(f"    Text extraction failed for {file_path}")
-                failures += 1
+                failed.append(file_path)
             elif not text.strip():
                 # Readable but empty, which is not a failure: an empty file has
                 # nothing to contribute and should not hold up the rest.
@@ -118,11 +243,13 @@ class DocumentProcessor:
                 document_texts.append({"text": text, "source": file_path})
                 count += 1
         logger.info(f"Done. Extracted text from {count} documents")
+        extract_seconds = time.monotonic() - started
+        index_started = time.monotonic()
 
-        if failures and not count:
+        if failed and not count:
             # Every readable candidate failed — a permissions change, a corrupt
-            # file, an unreadable encoding. Raising *before* self.vectorstore is
-            # reassigned is what keeps the previous index intact, which matters
+            # file, an unreadable encoding. Raising *before* the new index is
+            # published is what keeps the previous index intact, which matters
             # now that a rescan can run on a live bot: replacing a working store
             # with an empty one would make the bot answer "not in my documents"
             # for everything it knew a moment ago. A partial failure still goes
@@ -147,17 +274,30 @@ class DocumentProcessor:
 
         response = ""
         if not texts:
-            self.vectorstore = self._create_empty_store()
+            store = self._create_empty_store()
             response = f"On topic '{self.topic}': no documents found to process"
         else:
             metadatas = [{"source": chunk["source"]} for chunk in all_chunks]
-            self.vectorstore = self.vector_store_factory.create_from_texts(
+            store = self.vector_store_factory.create_from_texts(
                 texts,
                 self.embeddings_factory.create_embeddings(),
                 collection_name=collection_name,
                 metadatas=metadatas,
             )
             response = f"On topic '{self.topic}': {len(all_chunks)} chunks created from {count} out of {len(files)} references"
+
+        snapshot = IndexSnapshot(
+            started_at=started_at,
+            finished_at=time.time(),
+            extract_seconds=extract_seconds,
+            index_seconds=time.monotonic() - index_started,
+            files=stamps,
+            failed=failed,
+            indexed_count=count,
+            chunk_count=len(all_chunks),
+        )
+        # Published together, in one assignment: see PublishedIndex.
+        self._index = PublishedIndex(store=store, snapshot=snapshot)
         if excluded:
             # Count only, never names: the channel-facing message is visible to
             # everyone, and a file is often excluded precisely because those
@@ -165,7 +305,130 @@ class DocumentProcessor:
             # is where whoever configured the bot will look.
             plural = "s" if len(excluded) != 1 else ""
             response += f" ({len(excluded)} file{plural} excluded; see logs)"
-        return response
+        return ScanResult(message=response, snapshot=snapshot)
+
+    # --- Freshness ----------------------------------------------------------
+
+    def _compute_freshness(self, snapshot: IndexSnapshot) -> IndexFreshness:
+        """Compare the directory with ``snapshot``. Blocking; stat only."""
+        current, _ = self._discover_files(strict=True)
+        return compare(snapshot, current)
+
+    def _remember(self, freshness: IndexFreshness) -> None:
+        """Cache a result, but only for the snapshot currently published.
+
+        A late result for an older snapshot is never useful and must not push
+        out a newer one.
+        """
+        if freshness.snapshot is not None and freshness.snapshot is self.snapshot:
+            self._freshness_cache = freshness
+
+    def _start_check(self, snapshot: IndexSnapshot) -> "asyncio.Future":
+        """Start a check of ``snapshot`` in a worker thread, in the one slot.
+
+        Routine and explicit checks share the slot, so a hung notes mount holds
+        at most one worker thread however many questions or ``status``
+        requests arrive. The thread cannot be cancelled: a caller that gives up
+        leaves it running, and it keeps the slot until it ends, when a late
+        result still fills the reuse window.
+        """
+        future = asyncio.ensure_future(
+            asyncio.to_thread(self._compute_freshness, snapshot)
+        )
+        self._inflight = (snapshot, future)
+
+        def _done(fut):
+            if self._inflight is not None and self._inflight[1] is fut:
+                self._inflight = None
+            if not fut.cancelled() and fut.exception() is None:
+                self._remember(fut.result())
+
+        future.add_done_callback(_done)
+        return future
+
+    async def routine_freshness(
+        self, snapshot: Optional[IndexSnapshot]
+    ) -> Optional[IndexFreshness]:
+        """Freshness for an answer whose excerpts came from ``snapshot``.
+
+        Never raises and never waits longer than ROUTINE_CHECK_TIMEOUT: it only
+        informs an answer, so on any problem the answer goes ahead without it
+        (None). A caller arriving while a check is in flight shares it only if
+        it is for the same snapshot, and never starts a second one.
+        """
+        if snapshot is None:
+            return None
+        cached = self._freshness_cache
+        if (
+            cached is not None
+            and cached.snapshot is snapshot
+            and time.time() - cached.checked_at < self.FRESHNESS_CACHE_SECONDS
+        ):
+            return cached
+
+        if self._inflight is None:
+            future = self._start_check(snapshot)
+        else:
+            inflight_snapshot, future = self._inflight
+            if inflight_snapshot is not snapshot:
+                return None
+
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(future), self.ROUTINE_CHECK_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Freshness check for {self.topic} timed out; answering without it"
+            )
+        except Exception:
+            logger.exception(
+                f"Freshness check for {self.topic} failed; answering without it"
+            )
+        return None
+
+    async def explicit_freshness(self) -> Optional[IndexFreshness]:
+        """A fresh check of the current snapshot, for someone who asked.
+
+        Waits for whatever check is in flight (it may have looked at a file
+        before the edit being asked about, or be another ``status``), then
+        runs its own in the shared slot, all within EXPLICIT_CHECK_TIMEOUT.
+        None before the first scan; raises FreshnessUnavailable if the check
+        errors or runs out of time.
+        """
+        snapshot = self.snapshot
+        if snapshot is None:
+            return None
+        deadline = time.monotonic() + self.EXPLICIT_CHECK_TIMEOUT
+
+        async def finished(future) -> bool:
+            # asyncio.wait reports the deadline as "not done" instead of
+            # raising, so a TimeoutError the worker itself raised (a slow
+            # network mount, say) is never mistaken for our deadline. It also
+            # never cancels or wraps the worker, so a caller that gives up
+            # leaves nothing attached to it.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return future.done()
+            done, _ = await asyncio.wait({future}, timeout=remaining)
+            return bool(done)
+
+        while self._inflight is not None:
+            running = self._inflight[1]
+            if not await finished(running):
+                raise FreshnessUnavailable("freshness check timed out")
+            # Whatever it raised is its own; ours runs next regardless.
+            if self._inflight is not None and self._inflight[1] is running:
+                self._inflight = None  # finished; its callback just hasn't run
+        if deadline - time.monotonic() <= 0:
+            raise FreshnessUnavailable("freshness check timed out")
+        future = self._start_check(snapshot)
+        if not await finished(future):
+            raise FreshnessUnavailable("freshness check timed out")
+        try:
+            return future.result()
+        except Exception as e:
+            raise FreshnessUnavailable(str(e)) from e
 
     async def _extract_text(self, file_path):
         """Extract text from a document file based on its extension"""
@@ -222,21 +485,33 @@ class DocumentProcessor:
                 couple of genuinely relevant chunks returns only those instead
                 of padding the context out to ``top_k``.
         """
-        if not self.vectorstore:
-            return []
+        docs, _ = await self.search_with_snapshot(query, top_k, score_threshold)
+        return docs
 
+    async def search_with_snapshot(
+        self, query, top_k=5, score_threshold=None
+    ) -> Tuple[List, Optional[IndexSnapshot]]:
+        """``search_documents``, plus the snapshot of the store it searched.
+
+        The published pair is read once, so the snapshot always describes the
+        index the excerpts came from, even if a rescan lands straight after.
+        """
+        index = self._index
+        if index is None or not index.store:
+            return [], None
+        return self._search(index.store, query, top_k, score_threshold), index.snapshot
+
+    def _search(self, store, query, top_k, score_threshold) -> List:
         if score_threshold is None:
-            return self.vectorstore.similarity_search(query, k=top_k)
+            return store.similarity_search(query, k=top_k)
 
         try:
-            scored = self.vectorstore.similarity_search_with_relevance_scores(
-                query, k=top_k
-            )
+            scored = store.similarity_search_with_relevance_scores(query, k=top_k)
         except Exception as e:
             # Relevance scoring depends on the store's distance metric; fall
             # back to an unfiltered search rather than answering nothing.
             logger.warning(f"Relevance scoring unavailable, ignoring threshold: {e}")
-            return self.vectorstore.similarity_search(query, k=top_k)
+            return store.similarity_search(query, k=top_k)
 
         kept = [doc for doc, score in scored if score >= score_threshold]
         logger.debug(
