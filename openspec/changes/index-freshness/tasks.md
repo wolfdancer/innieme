@@ -21,7 +21,7 @@ The branch `shane/innieme-index-freshness-b802b6` (closed PR wolfdancer/innieme#
 ## 3. Slack commands
 
 - [ ] 3.1 Add `status` to the mention commands and make `rescan` open to everyone while `quit` stays outie-only; verify parse tests (`status` is a command, "what is the status?" is not) and access tests for each command and requester
-- [ ] 3.2 Implement the `status` reply (counts-only channel reply; names to the outie in an ephemeral message, escaped, never in channel or model history; no-scan and failure replies without paths; channel reply survives a failed private send); verify with tests including a hostile file name and that thread context excludes the private message
+- [ ] 3.2 Implement the `status` reply (counts-only channel reply; names to the outie in an ephemeral message, escaped, never in channel or model history; no-scan and failure replies without paths; channel reply survives a failed private send); verify with tests including a hostile file name, that thread context excludes the private message, and that an erroring or timed-out freshness check still yields the counts with a 'could not be determined' freshness line, while any other report failure yields the generic failure reply
 - [ ] 3.3 Report the scan's own duration (from `scan()`'s result, excluding queue wait) in the `rescan` reply without turning a successful scan into a reported failure; verify with a test for the success text and the existing failed-rescan tests
 - [ ] 3.4 Update CLAUDE.md for the new commands, access change and freshness behavior; verify the documented commands match `BOT_COMMANDS` and the access rules
 
@@ -35,6 +35,7 @@ The branch `shane/innieme-index-freshness-b802b6` (closed PR wolfdancer/innieme#
 - [x] 5.1 Review loop 1: Codex findings (private status names, snapshot-recorded files, failure rule, snapshot binding, check bound, Discord scope) and `/code-review` findings (single-flight check, atomic store+snapshot, name disclosure wording, deleted-file label, per-scan duration, stat failure, single walk, merged cache requirement)
 - [x] 5.2 Review loop 2: Codex (explicit status check vs single-flight, privacy wording) and `/code-review` (bounded explicit check, snapshot-matched sharing, `scan()` and retrieval wrappers so callers are unchanged, requirement split for length)
 - [x] 5.3 Review loop 3: Codex (wrapper-compatibility wording) and `/code-review` (status failure vs unavailable freshness, task order, caller's-snapshot cache rule, typo)
+- [x] 5.4 Review loop 4: `/code-review` (task 3.2 now verifies the freshness-unavailable status scenario)
 
 ## Workflow follow-up
 
