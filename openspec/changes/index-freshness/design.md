@@ -19,11 +19,11 @@ Constraints: the notes directory is the user's own, possibly large, possibly on 
 ## Decisions
 
 **1. A snapshot object owned by the document processor, set together with the store.**
-The snapshot is assigned in the same step that replaces the vector store, after a scan succeeds, so the two cannot disagree. A scan that raises never reaches that step.
+The store and its snapshot are published together as one object in the step that replaces the index after a scan succeeds, so readers can never see one without the other. A scan that raises never reaches that step.
 *Alternative:* store the metadata in Chroma collection metadata. Rejected: couples freshness to one backend (FAISS is already half-present), and the collection is replaced each scan anyway.
 
 **1a. Bind each answer to the index it retrieved from.**
-An answer retrieves chunks, then awaits a freshness check. A rescan could publish a new snapshot in between and the old chunks would be judged current against it. The engine therefore captures the snapshot at retrieval time and computes freshness against that snapshot; cached check results are keyed by snapshot identity, so a result for an old snapshot is never reused or written back after a rescan.
+An answer retrieves chunks, then awaits a freshness check. A rescan could publish a new snapshot in between and the old chunks would be judged current against it. The engine therefore reads the published (store, snapshot) pair once, searches that store, and passes that snapshot to the freshness check, which never reads the processor's current snapshot itself; cached check results are keyed by snapshot identity, so a result for an old snapshot is never reused or written back after a rescan.
 *Alternative:* a generation counter on store plus snapshot. Equivalent; the snapshot object already is the generation, so no new counter is needed.
 
 **2. Staleness = mtime_ns + size, stamped before the read.**
@@ -31,11 +31,11 @@ The comparison covers every candidate recorded in the snapshot, including empty 
 *Alternative:* content hash. Rejected by decision: requires reading every file per check. Known false positives (sync tools touching mtimes) are accepted; the cost is a spurious "rescan?" suggestion, not a wrong answer.
 
 **3. Check by re-walking the directory, with a 30 s reuse window for routine checks.**
-Per-query checks run in a worker thread so a slow mount does not stall the event loop, and the answer waits at most 5 seconds for one before proceeding without freshness information (the abandoned thread finishes harmlessly). `status` forces a fresh check; a scan clears the cached result.
+Per-query checks run in a worker thread so a slow mount does not stall the event loop, and the answer waits at most 5 seconds for one before proceeding without freshness information. Only one routine check per topic runs at a time: later routine callers share its result or skip it, so a hung mount costs one stuck thread rather than one per question, and a late result may still fill the reuse window. An explicit `status` check is not routine: it waits for the running check, then runs its own, and says freshness could not be determined if the mount is unavailable. The check makes a single directory walk filtered by extension rather than repeating the scan's per-extension globs. `status` forces a fresh check; a scan clears the cached result.
 *Alternatives:* filesystem watcher (extra dependency, platform quirks, unreliable on network mounts); check only at `status` time (the model would never know).
 
 **4. Two audiences, two levels of detail.**
-The model gets chunk-level labels (names it already sees via `[source: ...]`) plus a count-only note; it is never handed the full list of changed files. Channel replies show counts only. Names go to the outie in an ephemeral message, because a threaded channel reply is visible to everyone and is also read back into the model's conversation history (`get_thread_context`); ephemeral messages are neither in channel history nor returned by the thread-replies API. This extends the existing "count, never names" rule for excluded files to unindexed files.
+The model gets chunk-level labels (names it already sees via `[source: ...]`) plus a count-only note; it is never handed the full list of changed files. Channel replies show counts only. Names go to the outie in an ephemeral message, because a threaded channel reply is visible to everyone and is also read back into the model's conversation history (`get_thread_context`); ephemeral messages are neither in channel history nor returned by the thread-replies API. This extends the existing "count, never names" rule for excluded files to unindexed files. Chunk labels do show the basename of a retrieved source that changed, but a retrieved source's name is already visible in answers through its `[source: ...]` label, so this discloses nothing new; what stays private are names supplied solely by freshness reports: the `status` file lists, and the names of new files and unreadable files, which the model never sees. A deleted source stays retrievable until the next rescan, so its basename appears in its label like any other retrieved source.
 *Alternatives:* names in the channel reply for the outie (rejected: public, and fed back to the model); a DM to the outie (works but moves the conversation out of the thread). Give the model all names so it can answer "what's stale?". Rejected: the model would repeat them to any channel member.
 
 **4a. The model is told to suggest a rescan, not to refuse.**
@@ -47,6 +47,9 @@ Opening rescan makes overlapping scans likely. A lock serializes them so the lat
 
 **6. Freshness failures are non-fatal for answers.**
 The check only informs a response, so any error during it is logged and the question is answered without freshness information. `status` instead reports a generic failure and logs details.
+
+**6a. Each scan returns its own result.**
+The rescan reply takes its duration from the scan's own result, not from the topic's current snapshot, so queued scans report their own time and not a neighbour's.
 
 **7. Timing reported in two parts.**
 Reading/parsing vs. chunking/embedding/store-building, since the second is where provider latency and cost live and is the part a user would act on.

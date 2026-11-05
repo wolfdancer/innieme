@@ -26,7 +26,7 @@ Mentioning the bot with the single word `status` in a channel configured for a t
 - **THEN** the reply says the status could not be checked and points to the bot logs, without file paths or error text
 
 ### Requirement: Status is open to everyone; file names are private to the outie
-`status` SHALL be available to any channel member. The reply posted in the channel SHALL contain counts only, whoever asked. When the requester is the topic's outie, the file names SHALL be sent in a separate message visible only to the outie, and SHALL NOT appear in channel history or in the conversation history later given to the model. Names SHALL be rendered so they cannot be interpreted as Slack markup or mentions.
+`status` SHALL be available to any channel member. The `status` reply posted in the channel SHALL contain counts only, whoever asked; it SHALL NOT list file names. When the requester is the topic's outie, the file names SHALL be sent in a separate message visible only to the outie, and SHALL NOT appear in channel history or in the conversation history later given to the model. Names SHALL be rendered so they cannot be interpreted as Slack markup or mentions.
 
 #### Scenario: Non-outie requester
 - **GIVEN** two files changed since the scan
@@ -50,7 +50,7 @@ Mentioning the bot with the single word `status` in a channel configured for a t
 - **THEN** it is escaped so it is shown literally
 
 ### Requirement: Rescan is open to everyone and reports its duration
-`rescan` SHALL be available to any channel member rather than only the outie. A successful rescan's reply SHALL state how long it took. A failed rescan SHALL say it failed and that the previously loaded documents are still being used.
+`rescan` SHALL be available to any channel member rather than only the outie. A successful rescan's reply SHALL state that scan's own running time, excluding any time spent waiting for an earlier scan to finish. A failed rescan SHALL say it failed and that the previously loaded documents are still being used.
 
 #### Scenario: Non-outie rescan
 - **WHEN** a non-outie mentions the bot with `rescan`

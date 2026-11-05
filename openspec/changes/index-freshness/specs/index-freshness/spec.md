@@ -7,11 +7,15 @@ Defines what a document scan records about itself and how the resulting index is
 ## ADDED Requirements
 
 ### Requirement: Scan records a snapshot
-Each completed scan of a topic SHALL record when it started and finished, how long reading the documents and building the index each took, the number of chunks and indexed files, the files whose text could not be extracted, and a size and modification time for every non-excluded candidate file.
+Each completed scan of a topic SHALL record when it started and finished, how long reading the documents and building the index each took, the number of chunks and indexed files, the files whose text could not be extracted, and a size and modification time for every non-excluded candidate file. A candidate that cannot be stat'ed during the scan SHALL be recorded as failed, with no stamp.
 
 #### Scenario: Successful scan
 - **WHEN** a scan of a topic completes
 - **THEN** a snapshot is available that reports the scan's timing, chunk count, indexed file count, and failed files
+
+#### Scenario: File cannot be stat'ed
+- **WHEN** a candidate file cannot be stat'ed during the scan
+- **THEN** it is listed among the failed files and is reported as modified, not new, by a later check that can stat it
 
 #### Scenario: No scan yet
 - **WHEN** no scan of a topic has completed
@@ -79,7 +83,7 @@ The system SHALL report, for a topic with a snapshot, which files recorded in th
 - **THEN** it reports that freshness is unknown rather than reporting every file as new
 
 ### Requirement: Staleness results may be briefly reused
-Routine staleness checks made while answering questions MAY reuse a result for up to 30 seconds. A check requested explicitly by a person, and the first check after a scan, SHALL reflect the directory as it is at that moment.
+Routine staleness checks made while answering questions MAY reuse a result for up to 30 seconds, provided it was computed against the current snapshot. A check requested explicitly by a person, and the first check after a scan, SHALL reflect the directory as it is at that moment.
 
 #### Scenario: Cached routine check
 - **WHEN** a file changes within 30 seconds of a routine check
@@ -89,17 +93,30 @@ Routine staleness checks made while answering questions MAY reuse a result for u
 - **WHEN** a person requests status after a file changed
 - **THEN** the change is reported regardless of any earlier routine check
 
+#### Scenario: Result from an older snapshot
+- **WHEN** a rescan completes and a routine check follows
+- **THEN** the check reflects the new snapshot, never a result computed for the old one
+
+### Requirement: Routine checks do not pile up
+At most one routine check per topic SHALL run at a time. Routine callers that arrive while one is running SHALL reuse its result or proceed without one, and a result that completes late MAY populate the reuse window. An explicit check SHALL wait for any running check to finish and then run its own fresh check; if checking is unavailable it SHALL report that freshness could not be determined.
+
+#### Scenario: Slow check in flight
+- **GIVEN** a routine check that has been running for longer than a caller is willing to wait
+- **WHEN** further questions arrive
+- **THEN** they do not start additional checks
+
+#### Scenario: Explicit check during a routine check
+- **GIVEN** a routine check in flight that inspected a file before it was edited
+- **WHEN** a person requests status after the edit
+- **THEN** the status check runs afresh after the routine one and reports the edit
+
 ### Requirement: Freshness is judged against the index the excerpts came from
-Staleness for an answer SHALL be computed against the snapshot that was current when that answer's excerpts were retrieved. A rescan completing during the answer SHALL NOT cause excerpts from the older index to be judged against the newer snapshot, and a staleness result computed for one snapshot SHALL NOT be reused for another.
+Staleness for an answer SHALL be computed against the snapshot that belongs to the index the excerpts were retrieved from, taken together with them. A rescan completing during the answer SHALL NOT cause excerpts from the older index to be judged against the newer snapshot.
 
 #### Scenario: Rescan completes mid-answer
 - **GIVEN** excerpts retrieved from index A
 - **WHEN** a rescan publishes index B before the answer's freshness is determined
 - **THEN** the excerpts are judged against A's snapshot, so a file edited between A and B is still labelled changed
-
-#### Scenario: Cached result after a rescan
-- **WHEN** a rescan completes and a routine check follows
-- **THEN** the check reflects the new snapshot, never a result computed for the old one
 
 ### Requirement: Scans of one topic do not overlap
 At most one scan of a given topic SHALL run at a time; a scan requested while another is running SHALL wait for it.

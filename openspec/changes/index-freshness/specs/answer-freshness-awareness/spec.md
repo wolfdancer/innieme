@@ -7,12 +7,16 @@ Defines how index freshness is conveyed to the model that answers questions, so 
 ## ADDED Requirements
 
 ### Requirement: Changed sources are labelled in the model's context
-When a retrieved excerpt comes from a file that was modified or removed after it was indexed, the excerpt's source label SHALL state that it has changed since it was indexed. Excerpts from unchanged files SHALL keep their ordinary label.
+When a retrieved excerpt comes from a file that was modified after it was indexed, its source label SHALL state that the file has changed since it was indexed. When the file has been deleted, the label SHALL state that it no longer exists. Excerpts from unchanged files SHALL keep their ordinary label.
 
 #### Scenario: Excerpt from a modified file
 - **GIVEN** a file edited after the last scan
 - **WHEN** an excerpt from that file is retrieved for a question
 - **THEN** its label marks it as changed since it was indexed
+
+#### Scenario: Excerpt from a deleted file
+- **WHEN** an excerpt from a file that no longer exists is retrieved
+- **THEN** its label says the file no longer exists, not merely that it changed
 
 #### Scenario: Excerpt from an unchanged file
 - **WHEN** an excerpt from an unchanged file is retrieved
