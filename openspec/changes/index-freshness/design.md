@@ -23,7 +23,7 @@ The store and its snapshot are published together as one object in the step that
 *Alternative:* store the metadata in Chroma collection metadata. Rejected: couples freshness to one backend (FAISS is already half-present), and the collection is replaced each scan anyway.
 
 **1a. Bind each answer to the index it retrieved from.**
-An answer retrieves chunks, then awaits a freshness check. A rescan could publish a new snapshot in between and the old chunks would be judged current against it. The engine therefore reads the published (store, snapshot) pair once, searches that store, and passes that snapshot to the freshness check, which never reads the processor's current snapshot itself; cached check results are keyed by snapshot identity, so a result for an old snapshot is never reused or written back after a rescan.
+An answer retrieves chunks, then awaits a freshness check. A rescan could publish a new snapshot in between and the old chunks would be judged current against it. The engine therefore asks the processor for retrieval that returns the snapshot of the store it searched (the existing `search_documents` stays as a wrapper), and and passes that snapshot to the freshness check, which never reads the processor's current snapshot itself; cached check results are keyed by snapshot identity, so a result for an old snapshot is never reused or written back after a rescan.
 *Alternative:* a generation counter on store plus snapshot. Equivalent; the snapshot object already is the generation, so no new counter is needed.
 
 **2. Staleness = mtime_ns + size, stamped before the read.**
@@ -31,7 +31,7 @@ The comparison covers every candidate recorded in the snapshot, including empty 
 *Alternative:* content hash. Rejected by decision: requires reading every file per check. Known false positives (sync tools touching mtimes) are accepted; the cost is a spurious "rescan?" suggestion, not a wrong answer.
 
 **3. Check by re-walking the directory, with a 30 s reuse window for routine checks.**
-Per-query checks run in a worker thread so a slow mount does not stall the event loop, and the answer waits at most 5 seconds for one before proceeding without freshness information. Only one routine check per topic runs at a time: later routine callers share its result or skip it, so a hung mount costs one stuck thread rather than one per question, and a late result may still fill the reuse window. An explicit `status` check is not routine: it waits for the running check, then runs its own, and says freshness could not be determined if the mount is unavailable. The check makes a single directory walk filtered by extension rather than repeating the scan's per-extension globs. `status` forces a fresh check; a scan clears the cached result.
+Per-query checks run in a worker thread so a slow mount does not stall the event loop, and the answer waits at most 5 seconds for one before proceeding without freshness information. Only one routine check per topic runs at a time: a later routine caller shares its result only when it was computed for that caller's snapshot, and otherwise skips freshness for that answer, so a hung mount costs one stuck thread rather than one per question, and a late result may still fill the reuse window. An explicit `status` check is not routine: it waits for the running check, then runs its own, within a 10 s total bound, and says freshness could not be determined if it cannot finish; the rest of the status reply is still posted. The check makes a single directory walk filtered by extension rather than repeating the scan's per-extension globs. `status` forces a fresh check; a scan clears the cached result.
 *Alternatives:* filesystem watcher (extra dependency, platform quirks, unreliable on network mounts); check only at `status` time (the model would never know).
 
 **4. Two audiences, two levels of detail.**
@@ -49,7 +49,7 @@ Opening rescan makes overlapping scans likely. A lock serializes them so the lat
 The check only informs a response, so any error during it is logged and the question is answered without freshness information. `status` instead reports a generic failure and logs details.
 
 **6a. Each scan returns its own result.**
-The rescan reply takes its duration from the scan's own result, not from the topic's current snapshot, so queued scans report their own time and not a neighbour's.
+The processor gains a `scan()` that returns the message and the new snapshot together; `scan_and_vectorize()` remains as a thin wrapper that returns the message string, so the startup callers (`discord_bot.py`, `slack_bot.py`), `Topic.scan_and_vectorize` and the document-processor tests are unchanged. Only the callers migrated to the new APIs (the engine's retrieval and the Slack rescan reply) need their test mocks updated. The rescan reply takes its duration from the result of its own `scan()`, not from the topic's current snapshot, so queued scans report their own time and not a neighbour's.
 
 **7. Timing reported in two parts.**
 Reading/parsing vs. chunking/embedding/store-building, since the second is where provider latency and cost live and is the part a user would act on.

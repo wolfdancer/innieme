@@ -98,17 +98,30 @@ Routine staleness checks made while answering questions MAY reuse a result for u
 - **THEN** the check reflects the new snapshot, never a result computed for the old one
 
 ### Requirement: Routine checks do not pile up
-At most one routine check per topic SHALL run at a time. Routine callers that arrive while one is running SHALL reuse its result or proceed without one, and a result that completes late MAY populate the reuse window. An explicit check SHALL wait for any running check to finish and then run its own fresh check; if checking is unavailable it SHALL report that freshness could not be determined.
+At most one routine check per topic SHALL run at a time. A routine caller that arrives while one is running SHALL reuse its result only if it was computed for the caller's snapshot, and otherwise SHALL proceed without freshness information. A result that completes late MAY populate the reuse window.
 
 #### Scenario: Slow check in flight
 - **GIVEN** a routine check that has been running for longer than a caller is willing to wait
 - **WHEN** further questions arrive
 - **THEN** they do not start additional checks
 
+#### Scenario: In-flight check belongs to an older snapshot
+- **GIVEN** a routine check running against snapshot A
+- **WHEN** a rescan publishes snapshot B and a question arrives holding B
+- **THEN** the question does not take A's result and proceeds without freshness information
+
+### Requirement: Explicit checks are bounded
+An explicit check SHALL wait for any running check to finish and then run its own fresh check, and SHALL wait no longer than 10 seconds in total. If it cannot finish in that time or checking is unavailable, it SHALL report that freshness could not be determined.
+
 #### Scenario: Explicit check during a routine check
 - **GIVEN** a routine check in flight that inspected a file before it was edited
 - **WHEN** a person requests status after the edit
 - **THEN** the status check runs afresh after the routine one and reports the edit
+
+#### Scenario: Mount hangs
+- **GIVEN** a routine check stuck on an unavailable notes directory
+- **WHEN** a person requests status
+- **THEN** within 10 seconds the reply says freshness could not be determined, and still gives the scan details
 
 ### Requirement: Freshness is judged against the index the excerpts came from
 Staleness for an answer SHALL be computed against the snapshot that belongs to the index the excerpts were retrieved from, taken together with them. A rescan completing during the answer SHALL NOT cause excerpts from the older index to be judged against the newer snapshot.
