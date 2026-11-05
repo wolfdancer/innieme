@@ -83,7 +83,7 @@ The system SHALL report, for a topic with a snapshot, which files recorded in th
 - **THEN** it reports that freshness is unknown rather than reporting every file as new
 
 ### Requirement: Staleness results may be briefly reused
-Routine staleness checks made while answering questions MAY reuse a result for up to 30 seconds, provided it was computed against the current snapshot. A check requested explicitly by a person, and the first check after a scan, SHALL reflect the directory as it is at that moment.
+Routine staleness checks made while answering questions MAY reuse a result for up to 30 seconds, provided it was computed against the caller's snapshot. A check requested explicitly by a person, and the first check after a scan, SHALL reflect the directory as it is at that moment.
 
 #### Scenario: Cached routine check
 - **WHEN** a file changes within 30 seconds of a routine check

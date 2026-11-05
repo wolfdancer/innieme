@@ -23,7 +23,7 @@ The store and its snapshot are published together as one object in the step that
 *Alternative:* store the metadata in Chroma collection metadata. Rejected: couples freshness to one backend (FAISS is already half-present), and the collection is replaced each scan anyway.
 
 **1a. Bind each answer to the index it retrieved from.**
-An answer retrieves chunks, then awaits a freshness check. A rescan could publish a new snapshot in between and the old chunks would be judged current against it. The engine therefore asks the processor for retrieval that returns the snapshot of the store it searched (the existing `search_documents` stays as a wrapper), and and passes that snapshot to the freshness check, which never reads the processor's current snapshot itself; cached check results are keyed by snapshot identity, so a result for an old snapshot is never reused or written back after a rescan.
+An answer retrieves chunks, then awaits a freshness check. A rescan could publish a new snapshot in between and the old chunks would be judged current against it. The engine therefore asks the processor for retrieval that returns the snapshot of the store it searched (the existing `search_documents` stays as a wrapper), and passes that snapshot to the freshness check, which never reads the processor's current snapshot itself; cached check results are keyed by snapshot identity, so a result for an old snapshot is never reused or written back after a rescan.
 *Alternative:* a generation counter on store plus snapshot. Equivalent; the snapshot object already is the generation, so no new counter is needed.
 
 **2. Staleness = mtime_ns + size, stamped before the read.**

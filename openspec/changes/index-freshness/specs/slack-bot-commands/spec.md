@@ -21,8 +21,12 @@ Mentioning the bot with the single word `status` in a channel configured for a t
 - **WHEN** someone asks "what is the status of Northwind?"
 - **THEN** it is answered as a question, not run as a command
 
-#### Scenario: Status check fails
-- **WHEN** the status check raises an error
+#### Scenario: Freshness unavailable
+- **WHEN** the freshness check raises an error or does not finish in time
+- **THEN** the reply still gives the scan details and counts, and its freshness line says freshness could not be determined
+
+#### Scenario: Status report cannot be produced
+- **WHEN** the report itself fails for any other reason
 - **THEN** the reply says the status could not be checked and points to the bot logs, without file paths or error text
 
 ### Requirement: Status is open to everyone; file names are private to the outie
