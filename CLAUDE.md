@@ -62,11 +62,32 @@ first can fail the build), then `uv run pytest`.
    a PydanticAI `Agent` whose system prompt is built from `ConversationDependencies` (topic `role`
    + matched doc chunks + thread conversation history). Chunks are rendered by
    `conversation_engine._format_chunk()`, which prefixes each with `[source: <basename>]` so the
-   model can attribute an answer to a file. When `retrieval_score_threshold` is set,
-   `search_documents()` scores results and drops those below the floor, falling back to an
-   unfiltered search if the store cannot produce relevance scores.
+   model can attribute an answer to a file. Retrieval goes through `search_with_snapshot()`, which
+   returns the excerpts together with the snapshot of the index they came from (see *Index
+   freshness*); `search_documents()` is its excerpts-only wrapper. When
+   `retrieval_score_threshold` is set, retrieval scores results and drops those below the floor,
+   falling back to an unfiltered search if the store cannot produce relevance scores.
 4. The LLM is configurable via `llm_model` (default `openai:gpt-5.6-terra`); the provider/model
    string and `llm_api_key` are resolved in `conversation_engine._build_model()`.
+
+### Index freshness
+
+Each successful scan publishes the store and an `IndexSnapshot` (`index_status.py`) together as
+one `PublishedIndex`: scan start/end, read vs. index timings, chunk count, failed files, and a
+`FileStamp` (mtime_ns + size, taken *before* the file is read) per candidate. A failed scan
+publishes nothing, so the previous pair keeps serving. `DocumentProcessor.scan()` returns that
+scan's own `ScanResult`; `scan_and_vectorize()` is the string-returning wrapper the startup paths
+use. Freshness compares the snapshot with the directory by `stat` alone:
+
+- **Routine** (`routine_freshness`, per answer): judged against the snapshot returned with the
+  excerpts by `search_with_snapshot()`, so a rescan mid-answer cannot mislabel them. Reused for
+  30 s per snapshot, one in flight per topic, bounded at 5 s, never raises.
+- **Explicit** (`explicit_freshness`, `status`): waits for an in-flight check, then runs its own,
+  10 s in total; raises `FreshnessUnavailable` on error or timeout.
+
+The model sees chunk labels (`changed since it was indexed`, `no longer exists`) from
+`_format_chunk()` and a count-only note from `describe_for_model()`; on both Discord and Slack,
+since answers share `ConversationEngine`. Not persisted: the index is rebuilt every startup.
 
 ### Core components
 
@@ -78,7 +99,8 @@ first can fail the build), then `uv run pytest`.
   PydanticAI `Agent`. Imports `TopicConfig` from `discord_bot_config` — shared by both platforms
   since the config shapes are identical.
 - **DocumentProcessor** (`src/innieme/document_processor.py`): scanning, vectorization,
-  similarity search.
+  similarity search, index snapshot and freshness checks (types and rendering in
+  `index_status.py`).
 - **KnowledgeManager** (`src/innieme/knowledge_manager.py`): conversation summarization via a
   PydanticAI `Agent` with structured `SummaryOutput`, plus knowledge-base storage.
 - **EmbeddingsFactory** (`embeddings_factory.py`) / **VectorStoreFactory**
@@ -147,8 +169,13 @@ thread ID; subsequent messages in that thread are answered automatically without
 - Admins can summarize a thread ("summary and file" on Discord, `/approve` etc. on Slack) and
   approve the summary to be stored into the knowledge base (`./data/summaries/`).
 - Slack commands are **mentions**, not slash commands (`BOT_COMMANDS` in `slack_bot.py`):
-  - `@bot rescan` — re-vectorizes the topic's documents without a restart. Outie only.
-  - `@bot quit` — shuts the bot down, process and all. Outie only.
+  - `@bot rescan` — re-vectorizes the topic's documents without a restart and reports how long
+    that scan took. Open to everyone; concurrent scans of a topic are serialized.
+  - `@bot status` — index age, scan timing (read vs. index), chunk/file counts and freshness.
+    Open to everyone. The channel reply is **counts only**; when the outie asks, the file names
+    go to them as an ephemeral message, which is in neither channel history nor the thread
+    replies `get_thread_context` reads back into the model.
+  - `@bot quit` — shuts the bot down, process and all. Outie only (`OUTIE_ONLY_COMMANDS`).
   - `@bot hello` — posts the introduction card. Open to everyone and needs no topic, so it
     still answers in a channel nobody has configured, which is where "is this bot alive?"
     gets asked. Handled before the topic lookup in `handle_mention` for that reason.

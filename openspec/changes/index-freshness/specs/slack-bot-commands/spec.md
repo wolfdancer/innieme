@@ -51,7 +51,7 @@ Mentioning the bot with the single word `status` in a channel configured for a t
 
 #### Scenario: Hostile file name
 - **WHEN** a listed file name contains `<`, `>`, `&` or a backtick
-- **THEN** it is escaped so it is shown literally
+- **THEN** it is shown exactly as written, with no character altered, and is not interpreted as markup or a mention
 
 ### Requirement: Rescan is open to everyone and reports its duration
 `rescan` SHALL be available to any channel member rather than only the outie. A successful rescan's reply SHALL state that scan's own running time, excluding any time spent waiting for an earlier scan to finish. A failed rescan SHALL say it failed and that the previously loaded documents are still being used.

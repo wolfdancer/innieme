@@ -1,35 +1,39 @@
-from innieme.slack_bot import SlackBot, parse_bot_command, authored_text, hello_blocks
-from innieme.slack_bot_config import SlackBotConfig, OutieConfig, TopicConfig, ChannelConfig
-
-import pytest
-from unittest.mock import AsyncMock, Mock, patch
 import asyncio
 import os
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+
+from innieme.slack_bot import SlackBot, authored_text, hello_blocks, parse_bot_command
+from innieme.slack_bot_config import (
+    ChannelConfig,
+    OutieConfig,
+    SlackBotConfig,
+    TopicConfig,
+)
+
 
 @pytest.fixture
 def mock_config():
     """Create a mock SlackBotConfig for testing"""
     # Create test directories
-    math_docs_dir = 'data/math'
+    math_docs_dir = "data/math"
     os.makedirs(math_docs_dir, exist_ok=True)
-    
+
     # Create channel config
     channel_config = ChannelConfig(channel_id="C1234567890")
-    
+
     # Create topic config
     topic_config = TopicConfig(
         name="math",
         role="Math Teacher",
         docs_dir=math_docs_dir,
-        channels=[channel_config]
+        channels=[channel_config],
     )
-    
+
     # Create outie config
-    outie_config = OutieConfig(
-        outie_id="U1234567890",
-        topics=[topic_config]
-    )
-    
+    outie_config = OutieConfig(outie_id="U1234567890", topics=[topic_config])
+
     # Create bot config
     config = SlackBotConfig(
         slack_bot_token="xoxb-test-token",
@@ -37,26 +41,27 @@ def mock_config():
         embeddings_api_key="test_embeddings_key",
         llm_api_key="test_llm_key",
         embedding_model="fake",  # Use fake for testing
-        outies=[outie_config]
+        outies=[outie_config],
     )
-    
+
     return config
 
-@patch('innieme.slack_bot.AsyncApp')
-@patch('innieme.slack_bot.AsyncSocketModeHandler')
+
+@patch("innieme.slack_bot.AsyncApp")
+@patch("innieme.slack_bot.AsyncSocketModeHandler")
 def test_slack_bot_initialization(mock_handler, mock_app, mock_config):
     """Test SlackBot initialization"""
     # Mock the AsyncApp and handler
     mock_app_instance = Mock()
     mock_app.return_value = mock_app_instance
     mock_app_instance.client = Mock()
-    
+
     mock_handler_instance = Mock()
     mock_handler.return_value = mock_handler_instance
-    
+
     # Create SlackBot instance
     bot = SlackBot(mock_config)
-    
+
     # Verify initialization. The socket-mode handler is deliberately NOT built
     # here -- it opens an aiohttp session and needs a running event loop, so it
     # is created in start() instead.
@@ -68,35 +73,49 @@ def test_slack_bot_initialization(mock_handler, mock_app, mock_config):
     assert len(bot.channels) == 1
     assert "C1234567890" in bot.channels
 
+
 def test_identify_topic(mock_config):
     """Test topic identification by channel ID"""
-    with patch('innieme.slack_bot.AsyncApp'), \
-         patch('innieme.slack_bot.AsyncSocketModeHandler'):
+    with (
+        patch("innieme.slack_bot.AsyncApp"),
+        patch("innieme.slack_bot.AsyncSocketModeHandler"),
+    ):
         bot = SlackBot(mock_config)
-        
+
         # Test existing channel
         topic = bot._identify_topic("C1234567890")
         assert topic is not None
         assert topic.config.name == "math"
-        
+
         # Test non-existing channel
         topic = bot._identify_topic("C0000000000")
         assert topic is None
 
+
 @pytest.mark.asyncio
 async def test_get_thread_context_drops_integration_attribution(mock_config):
     """History feeds the model, so an earlier message's trailer must not ride along."""
-    with patch('innieme.slack_bot.AsyncApp'), \
-         patch('innieme.slack_bot.AsyncSocketModeHandler'):
+    with (
+        patch("innieme.slack_bot.AsyncApp"),
+        patch("innieme.slack_bot.AsyncSocketModeHandler"),
+    ):
         bot = SlackBot(mock_config)
         bot.client = AsyncMock()
         bot.client.conversations_replies.return_value = {
-            "messages": [{
-                "user": "U1234567890",
-                "text": "what is the latest on Northwind *Sent using* <@U0CLAUDE>",
-                "blocks": [{"type": "context", "elements": [
-                    {"type": "mrkdwn", "text": "*Sent using* <@U0CLAUDE>"}]}],
-            }]
+            "messages": [
+                {
+                    "user": "U1234567890",
+                    "text": "what is the latest on Northwind *Sent using* <@U0CLAUDE>",
+                    "blocks": [
+                        {
+                            "type": "context",
+                            "elements": [
+                                {"type": "mrkdwn", "text": "*Sent using* <@U0CLAUDE>"}
+                            ],
+                        }
+                    ],
+                }
+            ]
         }
         bot.client.auth_test.return_value = {"user_id": "UBOT123456"}
 
@@ -108,24 +127,26 @@ async def test_get_thread_context_drops_integration_attribution(mock_config):
 @pytest.mark.asyncio
 async def test_get_thread_context(mock_config):
     """Test getting thread context from Slack"""
-    with patch('innieme.slack_bot.AsyncApp'), \
-         patch('innieme.slack_bot.AsyncSocketModeHandler'):
+    with (
+        patch("innieme.slack_bot.AsyncApp"),
+        patch("innieme.slack_bot.AsyncSocketModeHandler"),
+    ):
         bot = SlackBot(mock_config)
-        
+
         # Mock the Slack client
         bot.client = AsyncMock()
         bot.client.conversations_replies.return_value = {
             "messages": [
                 {"user": "U1234567890", "text": "Hello"},
                 {"user": "UBOT123456", "text": "Hi there!"},
-                {"user": "U1234567890", "text": "How are you?"}
+                {"user": "U1234567890", "text": "How are you?"},
             ]
         }
         bot.client.auth_test.return_value = {"user_id": "UBOT123456"}
-        
+
         # Get thread context
         context = await bot.get_thread_context("C1234567890", "1234567890.123456")
-        
+
         # Verify context
         assert len(context) == 3
         assert context[0]["role"] == "user"
@@ -135,45 +156,56 @@ async def test_get_thread_context(mock_config):
         assert context[2]["role"] == "user"
         assert context[2]["content"] == "How are you?"
 
+
 def test_should_respond_to_thread(mock_config):
     """Test thread response logic"""
-    with patch('innieme.slack_bot.AsyncApp'), \
-         patch('innieme.slack_bot.AsyncSocketModeHandler'):
+    with (
+        patch("innieme.slack_bot.AsyncApp"),
+        patch("innieme.slack_bot.AsyncSocketModeHandler"),
+    ):
         bot = SlackBot(mock_config)
-        
+
         # Test message without thread_ts
         event = {"channel": "C1234567890"}
         assert not bot._should_respond_to_thread(event)
-        
+
         # Test message with thread_ts but no following thread
         event = {"channel": "C1234567890", "thread_ts": "1234567890.123456"}
         assert not bot._should_respond_to_thread(event)
-        
+
         # Test message with thread_ts in non-existing channel
         event = {"channel": "C0000000000", "thread_ts": "1234567890.123456"}
         assert not bot._should_respond_to_thread(event)
+
+
 def test_resolve_cache_dir_uses_configured_value(mock_config):
     """A bot-level cache_dir wins and has ~ expanded"""
     from innieme.innie import Topic
+
     mock_config.cache_dir = "~/.config/innieme/cache"
     outie = mock_config.outies[0]
     resolved = Topic._resolve_cache_dir(outie, outie.topics[0])
     assert resolved == os.path.expanduser("~/.config/innieme/cache")
     assert "~" not in resolved
 
+
 def test_resolve_cache_dir_falls_back_to_docs_dir(mock_config):
     """Without cache_dir, the legacy docs_dir location is used"""
     from innieme.innie import Topic
+
     mock_config.cache_dir = None
     outie = mock_config.outies[0]
     topic_config = outie.topics[0]
     resolved = Topic._resolve_cache_dir(outie, topic_config)
     assert resolved == os.path.join(topic_config.docs_dir, ".cache", "langchain")
 
+
 @pytest.mark.asyncio
-@patch('innieme.slack_bot.AsyncApp')
-@patch('innieme.slack_bot.AsyncSocketModeHandler')
-async def test_start_builds_handler_inside_event_loop(mock_handler, mock_app, mock_config):
+@patch("innieme.slack_bot.AsyncApp")
+@patch("innieme.slack_bot.AsyncSocketModeHandler")
+async def test_start_builds_handler_inside_event_loop(
+    mock_handler, mock_app, mock_config
+):
     """The handler is constructed in start(), where a loop is running.
 
     Building it in __init__ raises "no running event loop" because
@@ -200,10 +232,13 @@ async def test_start_builds_handler_inside_event_loop(mock_handler, mock_app, mo
     # test_a_completed_run_leaves_no_handler_to_reuse.
     assert bot.handler is None
 
+
 @pytest.mark.asyncio
-@patch('innieme.slack_bot.AsyncApp')
-@patch('innieme.slack_bot.AsyncSocketModeHandler')
-async def test_stop_lets_start_return_so_the_process_exits(mock_handler, mock_app, mock_config):
+@patch("innieme.slack_bot.AsyncApp")
+@patch("innieme.slack_bot.AsyncSocketModeHandler")
+async def test_stop_lets_start_return_so_the_process_exits(
+    mock_handler, mock_app, mock_config
+):
     """stop() must end start(), not just disconnect.
 
     start_async() ends in an infinite sleep, so closing the socket-mode client
@@ -215,7 +250,9 @@ async def test_stop_lets_start_return_so_the_process_exits(mock_handler, mock_ap
     handler_instance.connect_async = AsyncMock()
     handler_instance.close_async = AsyncMock()
     # start_async is what must NOT be used: it never returns.
-    handler_instance.start_async = AsyncMock(side_effect=AssertionError("start_async blocks forever"))
+    handler_instance.start_async = AsyncMock(
+        side_effect=AssertionError("start_async blocks forever")
+    )
     mock_handler.return_value = handler_instance
 
     bot = SlackBot(mock_config)
@@ -231,9 +268,10 @@ async def test_stop_lets_start_return_so_the_process_exits(mock_handler, mock_ap
 
     handler_instance.close_async.assert_awaited_once()
 
+
 @pytest.mark.asyncio
-@patch('innieme.slack_bot.AsyncApp')
-@patch('innieme.slack_bot.AsyncSocketModeHandler')
+@patch("innieme.slack_bot.AsyncApp")
+@patch("innieme.slack_bot.AsyncSocketModeHandler")
 async def test_failed_startup_closes_the_handler(mock_handler, mock_app, mock_config):
     """A topic that fails to prepare must not leak the handler's aiohttp session.
 
@@ -261,9 +299,11 @@ async def test_failed_startup_closes_the_handler(mock_handler, mock_app, mock_co
 
 
 @pytest.mark.asyncio
-@patch('innieme.slack_bot.AsyncApp')
-@patch('innieme.slack_bot.AsyncSocketModeHandler')
-async def test_a_completed_run_leaves_no_handler_to_reuse(mock_handler, mock_app, mock_config):
+@patch("innieme.slack_bot.AsyncApp")
+@patch("innieme.slack_bot.AsyncSocketModeHandler")
+async def test_a_completed_run_leaves_no_handler_to_reuse(
+    mock_handler, mock_app, mock_config
+):
     """The closed handler is dropped, and a second stop() is a harmless no-op.
 
     Keeping it would let a second start() reconnect a client whose aiohttp
@@ -291,7 +331,7 @@ async def test_a_completed_run_leaves_no_handler_to_reuse(mock_handler, mock_app
 @pytest.mark.asyncio
 async def test_stop_before_start_does_not_raise(mock_config):
     """Stopping a bot that was never started is a no-op, not an AttributeError"""
-    with patch('innieme.slack_bot.AsyncApp') as mock_app:
+    with patch("innieme.slack_bot.AsyncApp") as mock_app:
         mock_app.return_value = Mock(client=Mock())
         bot = SlackBot(mock_config)
         await bot.stop()  # handler is None; must not raise
@@ -302,35 +342,42 @@ class TestMarkdownToMrkdwn:
 
     def test_bold_double_becomes_single_asterisk(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("**Stage:** drafted") == "*Stage:* drafted"
         assert markdown_to_mrkdwn("__Stage:__ drafted") == "*Stage:* drafted"
 
     def test_italic_becomes_underscores_not_bold(self):
         """The inversion that matters: *x* means bold in Slack, italic in markdown"""
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("*Sources: a.md*") == "_Sources: a.md_"
 
     def test_bold_is_not_downgraded_to_italic(self):
         """Bold must not be re-matched by the italic pass"""
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("**bold** and *italic*") == "*bold* and _italic_"
 
     def test_headings_become_bold(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("## Key contacts") == "*Key contacts*"
         assert markdown_to_mrkdwn("# Top\n\ntext") == "*Top*\n\ntext"
 
     def test_bullets_become_literal_bullet_chars_preserving_indent(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         out = markdown_to_mrkdwn("- one\n- two\n  - nested")
         assert out == "• one\n• two\n  • nested"
 
     def test_asterisk_bullets_are_not_read_as_italic(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("* one\n* two") == "• one\n• two"
 
     def test_links_use_slack_angle_syntax(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("[docs](https://x.com/a)") == "<https://x.com/a|docs>"
         assert markdown_to_mrkdwn("[mail](mailto:a@b.co)") == "<mailto:a@b.co|mail>"
 
@@ -344,9 +391,15 @@ class TestMarkdownToMrkdwn:
         renders harmlessly.
         """
         from innieme.slack_bot import markdown_to_mrkdwn
-        for src in ("[all](!here)", "[everyone](!channel)",
-                    "[someone](@U012ABC)", "[somewhere](#C012ABC)",
-                    "[js](javascript:alert(1))", "[rel](/etc/passwd)"):
+
+        for src in (
+            "[all](!here)",
+            "[everyone](!channel)",
+            "[someone](@U012ABC)",
+            "[somewhere](#C012ABC)",
+            "[js](javascript:alert(1))",
+            "[rel](/etc/passwd)",
+        ):
             out = markdown_to_mrkdwn(src)
             assert out == src, f"{src!r} was converted to {out!r}"
             assert not out.startswith("<"), f"{src!r} produced control syntax"
@@ -358,6 +411,7 @@ class TestMarkdownToMrkdwn:
         is dropped because it separates target from label and is not escaped.
         """
         from innieme.slack_bot import markdown_to_mrkdwn
+
         out = markdown_to_mrkdwn("[a>b|c](https://x.co)")
         assert out == "<https://x.co|a&gt;bc>"
 
@@ -368,6 +422,7 @@ class TestMarkdownToMrkdwn:
         <!channel> must not make the bot ping everyone.
         """
         from innieme.slack_bot import markdown_to_mrkdwn
+
         for raw, dead in [
             ("<!here>", "&lt;!here&gt;"),
             ("<!channel>", "&lt;!channel&gt;"),
@@ -381,6 +436,7 @@ class TestMarkdownToMrkdwn:
     def test_bracketed_control_target_cannot_survive_a_rejected_link(self):
         """A rejected link is returned literally, so its text must be inert too"""
         from innieme.slack_bot import markdown_to_mrkdwn
+
         out = markdown_to_mrkdwn("[all](<!here>)")
         assert "<!here>" not in out
         assert "&lt;!here&gt;" in out
@@ -388,29 +444,35 @@ class TestMarkdownToMrkdwn:
     def test_control_syntax_inside_code_is_also_neutralised(self):
         """Slack interprets mentions inside code spans too"""
         from innieme.slack_bot import markdown_to_mrkdwn
+
         out = markdown_to_mrkdwn("run `echo <!here>`")
         assert "<!here>" not in out
         assert "&lt;!here&gt;" in out
 
     def test_ampersand_escaped_once(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("a & b") == "a &amp; b"
 
     def test_url_containing_delimiters_is_left_literal(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         src = "[x](https://x.co/a|b)"
         assert markdown_to_mrkdwn(src) == src
 
     def test_strikethrough_single_tilde(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("~~gone~~") == "~gone~"
 
     def test_inline_code_is_left_alone(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("run `a - b` now") == "run `a - b` now"
 
     def test_fenced_block_contents_untouched(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         src = "text\n```\n- **not** a bullet\n## not a heading\n```\n- real"
         out = markdown_to_mrkdwn(src)
         assert "```\n- **not** a bullet\n## not a heading\n```" in out
@@ -418,6 +480,7 @@ class TestMarkdownToMrkdwn:
 
     def test_empty_and_none_safe(self):
         from innieme.slack_bot import markdown_to_mrkdwn
+
         assert markdown_to_mrkdwn("") == ""
         assert markdown_to_mrkdwn(None) is None
 
@@ -429,6 +492,7 @@ class TestMarkdownToMrkdwn:
         bullet, inline code, and an italic trailer.
         """
         from innieme.slack_bot import markdown_to_mrkdwn
+
         src = (
             "**Northwind Energy — Customer**\n"
             "- **Stage:** proposal drafted for the pilot engagement\n"
@@ -449,10 +513,12 @@ class TestSplitForSlack:
 
     def test_short_text_is_one_part(self):
         from innieme.slack_bot import split_for_slack
+
         assert split_for_slack("short") == ["short"]
 
     def test_splits_on_paragraph_boundary(self):
         from innieme.slack_bot import split_for_slack
+
         text = ("a" * 50 + "\n\n") * 10
         parts = split_for_slack(text, limit=120)
         assert len(parts) > 1
@@ -462,12 +528,14 @@ class TestSplitForSlack:
 
     def test_falls_back_to_line_then_space(self):
         from innieme.slack_bot import split_for_slack
+
         parts = split_for_slack("word " * 100, limit=60)
         assert all(len(p) <= 60 for p in parts)
         assert "".join(parts).replace("\n", " ").split() == ["word"] * 100
 
     def test_never_splits_inside_code_fence(self):
         from innieme.slack_bot import split_for_slack
+
         text = "intro\n\n```\n" + ("x" * 200) + "\n```\n\noutro"
         parts = split_for_slack(text, limit=100)
         for part in parts:
@@ -477,32 +545,41 @@ class TestSplitForSlack:
         """No words are dropped. Parts are separate messages, so the join
         separator is implicit -- rejoin with a newline, not edge-to-edge."""
         from innieme.slack_bot import split_for_slack
+
         text = "\n\n".join(f"Paragraph {i} " + "y" * 80 for i in range(12))
         parts = split_for_slack(text, limit=200)
         assert "\n".join(parts).split() == text.split()
 
     def test_empty_string(self):
         from innieme.slack_bot import split_for_slack
+
         assert split_for_slack("") == [""]
 
     def test_oversized_code_block_reopens_fence_each_part(self):
         """A code block bigger than one message stays code in every part"""
         from innieme.slack_bot import split_for_slack
-        text = "intro\n\n```\n" + "\n".join(f"line {i}" for i in range(60)) + "\n```\n\noutro"
+
+        text = (
+            "intro\n\n```\n"
+            + "\n".join(f"line {i}" for i in range(60))
+            + "\n```\n\noutro"
+        )
         parts = split_for_slack(text, limit=120)
         assert len(parts) > 2
         for part in parts:
             assert part.count("```") % 2 == 0, f"unbalanced: {part[:40]!r}"
         # every line of the code block survives somewhere
         for i in range(60):
-            assert any(f"line {i}\n" in p or p.endswith(f"line {i}") or f"line {i}\n```" in p
-                       for p in parts), f"lost line {i}"
+            assert any(
+                f"line {i}\n" in p or p.endswith(f"line {i}") or f"line {i}\n```" in p
+                for p in parts
+            ), f"lost line {i}"
 
 
 @pytest.mark.asyncio
 async def test_working_reaction_added_then_removed(mock_config):
     """The indicator is a reaction on the parent, cleared when the answer posts"""
-    with patch('innieme.slack_bot.AsyncApp') as mock_app:
+    with patch("innieme.slack_bot.AsyncApp") as mock_app:
         client = Mock()
         client.reactions_add = AsyncMock()
         client.reactions_remove = AsyncMock()
@@ -515,17 +592,20 @@ async def test_working_reaction_added_then_removed(mock_config):
         await bot.process_and_respond(topic, "C1234567890", "q", "111.1", "111.1")
 
         client.reactions_add.assert_awaited_once_with(
-            channel="C1234567890", name="thinking_face", timestamp="111.1")
+            channel="C1234567890", name="thinking_face", timestamp="111.1"
+        )
         client.reactions_remove.assert_awaited_once_with(
-            channel="C1234567890", name="thinking_face", timestamp="111.1")
+            channel="C1234567890", name="thinking_face", timestamp="111.1"
+        )
         # No "Thinking..." message is posted any more
         posted = [c.kwargs["text"] for c in client.chat_postMessage.await_args_list]
         assert posted == ["*Answer*"]
 
+
 @pytest.mark.asyncio
 async def test_working_reaction_cleared_on_error(mock_config):
     """A failed answer must not leave the thread looking like it's still working"""
-    with patch('innieme.slack_bot.AsyncApp') as mock_app:
+    with patch("innieme.slack_bot.AsyncApp") as mock_app:
         client = Mock()
         client.reactions_add = AsyncMock()
         client.reactions_remove = AsyncMock()
@@ -540,16 +620,20 @@ async def test_working_reaction_cleared_on_error(mock_config):
 
         client.reactions_remove.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 async def test_missing_reactions_scope_does_not_block_answering(mock_config):
     """Without reactions:write the bot still answers"""
     from slack_sdk.errors import SlackApiError
-    with patch('innieme.slack_bot.AsyncApp') as mock_app:
+
+    with patch("innieme.slack_bot.AsyncApp") as mock_app:
         client = Mock()
         client.reactions_add = AsyncMock(
-            side_effect=SlackApiError("missing_scope", {"error": "missing_scope"}))
+            side_effect=SlackApiError("missing_scope", {"error": "missing_scope"})
+        )
         client.reactions_remove = AsyncMock(
-            side_effect=SlackApiError("missing_scope", {"error": "missing_scope"}))
+            side_effect=SlackApiError("missing_scope", {"error": "missing_scope"})
+        )
         client.chat_postMessage = AsyncMock()
         mock_app.return_value = Mock(client=client)
         bot = SlackBot(mock_config)
@@ -560,10 +644,11 @@ async def test_missing_reactions_scope_does_not_block_answering(mock_config):
 
         client.chat_postMessage.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 async def test_long_response_posts_multiple_messages_not_a_file(mock_config):
     """Long summaries are split into thread messages; files_upload is not used"""
-    with patch('innieme.slack_bot.AsyncApp') as mock_app:
+    with patch("innieme.slack_bot.AsyncApp") as mock_app:
         client = Mock()
         client.reactions_add = AsyncMock()
         client.reactions_remove = AsyncMock()
@@ -574,7 +659,8 @@ async def test_long_response_posts_multiple_messages_not_a_file(mock_config):
 
         topic = Mock()
         topic.process_query = AsyncMock(
-            return_value="\n\n".join(f"Para {i} " + "z" * 500 for i in range(20)))
+            return_value="\n\n".join(f"Para {i} " + "z" * 500 for i in range(20))
+        )
         await bot.process_and_respond(topic, "C1234567890", "q", "111.1", "111.1")
 
         assert client.chat_postMessage.await_count > 1
@@ -602,7 +688,7 @@ class TestParseBotCommand:
         assert parse_bot_command(f"<@{self.BOT}> rescan ...", self.BOT) == "rescan"
 
     def test_leading_punctuation_is_not_stripped(self):
-        """":quit:" is an emoji, ".quit" is a typo -- neither is an instruction."""
+        """ ":quit:" is an emoji, ".quit" is a typo -- neither is an instruction."""
         for text in [
             f"<@{self.BOT}> :quit:",
             f"<@{self.BOT}> .quit",
@@ -612,7 +698,7 @@ class TestParseBotCommand:
             assert parse_bot_command(text, self.BOT) is None, text
 
     def test_trailing_question_mark_is_a_question_not_a_command(self):
-        """"@bot quit?" asks about quitting; it must not shut the bot down."""
+        """ "@bot quit?" asks about quitting; it must not shut the bot down."""
         assert parse_bot_command(f"<@{self.BOT}> quit?", self.BOT) is None
         assert parse_bot_command(f"<@{self.BOT}> rescan?", self.BOT) is None
 
@@ -630,7 +716,7 @@ class TestParseBotCommand:
             assert parse_bot_command(text, self.BOT) is None, text
 
     def test_a_message_mentioning_someone_else_is_not_a_command(self):
-        """"@bot quit @alice" is addressed to a person, not a bare command."""
+        """ "@bot quit @alice" is addressed to a person, not a bare command."""
         for text in [
             f"<@{self.BOT}> quit <@U0ALICE>",
             f"<@{self.BOT}> quit <@U0ALICE|alice>",
@@ -658,8 +744,11 @@ class TestParseBotCommand:
 
 def _context_block(text):
     """An integration's attribution block, as the Claude Slack app sends it."""
-    return {"type": "context", "block_id": "yvYdJ",
-            "elements": [{"type": "mrkdwn", "text": text, "verbatim": False}]}
+    return {
+        "type": "context",
+        "block_id": "yvYdJ",
+        "elements": [{"type": "mrkdwn", "text": text, "verbatim": False}],
+    }
 
 
 class TestAuthoredText:
@@ -680,9 +769,18 @@ class TestAuthoredText:
         event = {
             "text": f"<@{self.BOT}> rescan *Sent using* <@{self.CLAUDE}>",
             "blocks": [
-                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
-                    {"type": "user", "user_id": self.BOT},
-                    {"type": "text", "text": " rescan"}]}]},
+                {
+                    "type": "rich_text",
+                    "elements": [
+                        {
+                            "type": "rich_text_section",
+                            "elements": [
+                                {"type": "user", "user_id": self.BOT},
+                                {"type": "text", "text": " rescan"},
+                            ],
+                        }
+                    ],
+                },
                 _context_block(f"*Sent using* <@{self.CLAUDE}>"),
             ],
         }
@@ -690,27 +788,46 @@ class TestAuthoredText:
         assert parse_bot_command(authored_text(event), self.BOT) == "rescan"
 
     def test_typed_message_is_unchanged(self):
-        event = {"text": f"<@{self.BOT}> rescan", "blocks": [
-            {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
-                {"type": "user", "user_id": self.BOT},
-                {"type": "text", "text": " rescan"}]}]}]}
+        event = {
+            "text": f"<@{self.BOT}> rescan",
+            "blocks": [
+                {
+                    "type": "rich_text",
+                    "elements": [
+                        {
+                            "type": "rich_text_section",
+                            "elements": [
+                                {"type": "user", "user_id": self.BOT},
+                                {"type": "text", "text": " rescan"},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
         assert authored_text(event) == f"<@{self.BOT}> rescan"
 
     def test_no_blocks_leaves_text_alone(self):
         """A plain chat.postMessage carries no blocks; text is all there is."""
-        assert authored_text({"text": f"<@{self.BOT}> rescan"}) == f"<@{self.BOT}> rescan"
+        assert (
+            authored_text({"text": f"<@{self.BOT}> rescan"}) == f"<@{self.BOT}> rescan"
+        )
         assert authored_text({"text": "", "blocks": []}) == ""
         assert authored_text({}) == ""
 
     def test_trailer_that_does_not_match_the_end_is_left_alone(self):
         """Only an exact suffix is removed; anything else keeps the old behaviour."""
-        event = {"text": f"<@{self.BOT}> rescan",
-                 "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+        event = {
+            "text": f"<@{self.BOT}> rescan",
+            "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")],
+        }
         assert authored_text(event) == f"<@{self.BOT}> rescan"
 
     def test_attribution_only_message_yields_nothing(self):
-        event = {"text": f"*Sent using* <@{self.CLAUDE}>",
-                 "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+        event = {
+            "text": f"*Sent using* <@{self.CLAUDE}>",
+            "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")],
+        }
         assert authored_text(event) == ""
         assert parse_bot_command(authored_text(event), self.BOT) is None
 
@@ -724,10 +841,23 @@ class TestAuthoredText:
         event = {
             "text": f"<@{self.BOT}> <https://example.com|quit>",
             "blocks": [
-                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
-                    {"type": "user", "user_id": self.BOT},
-                    {"type": "text", "text": " "},
-                    {"type": "link", "url": "https://example.com", "text": "quit"}]}]},
+                {
+                    "type": "rich_text",
+                    "elements": [
+                        {
+                            "type": "rich_text_section",
+                            "elements": [
+                                {"type": "user", "user_id": self.BOT},
+                                {"type": "text", "text": " "},
+                                {
+                                    "type": "link",
+                                    "url": "https://example.com",
+                                    "text": "quit",
+                                },
+                            ],
+                        }
+                    ],
+                },
                 _context_block(f"*Sent using* <@{self.CLAUDE}>"),
             ],
         }
@@ -737,8 +867,10 @@ class TestAuthoredText:
     def test_code_and_quote_markup_is_preserved(self):
         """Code-formatted or quoted text keeps its markup, so it is not a command."""
         for text in [f"<@{self.BOT}> `quit`", f"<@{self.BOT}> &gt; quit"]:
-            event = {"text": f"{text} *Sent using* <@{self.CLAUDE}>",
-                     "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+            event = {
+                "text": f"{text} *Sent using* <@{self.CLAUDE}>",
+                "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")],
+            }
             assert authored_text(event) == text
             assert parse_bot_command(authored_text(event), self.BOT) is None, text
 
@@ -746,11 +878,20 @@ class TestAuthoredText:
         """Stripping front to back would leave the earlier trailer behind."""
         event = {
             "text": f"<@{self.BOT}> rescan *Sent using* <@{self.CLAUDE}> "
-                    f"*Sent using* <@U0OTHERAPP>",
+            f"*Sent using* <@U0OTHERAPP>",
             "blocks": [
-                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
-                    {"type": "user", "user_id": self.BOT},
-                    {"type": "text", "text": " rescan"}]}]},
+                {
+                    "type": "rich_text",
+                    "elements": [
+                        {
+                            "type": "rich_text_section",
+                            "elements": [
+                                {"type": "user", "user_id": self.BOT},
+                                {"type": "text", "text": " rescan"},
+                            ],
+                        }
+                    ],
+                },
                 _context_block(f"*Sent using* <@{self.CLAUDE}>"),
                 _context_block("*Sent using* <@U0OTHERAPP>"),
             ],
@@ -764,9 +905,18 @@ class TestAuthoredText:
             "text": f"*heads up* <@{self.BOT}> rescan",
             "blocks": [
                 _context_block("*heads up*"),
-                {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [
-                    {"type": "user", "user_id": self.BOT},
-                    {"type": "text", "text": " rescan"}]}]},
+                {
+                    "type": "rich_text",
+                    "elements": [
+                        {
+                            "type": "rich_text_section",
+                            "elements": [
+                                {"type": "user", "user_id": self.BOT},
+                                {"type": "text", "text": " rescan"},
+                            ],
+                        }
+                    ],
+                },
             ],
         }
         assert authored_text(event) == f"*heads up* <@{self.BOT}> rescan"
@@ -797,15 +947,17 @@ class TestAuthoredText:
             assert parse_bot_command(authored_text(event), self.BOT) is None, trailing
 
     def test_question_keeps_its_words(self):
-        event = {"text": f"<@{self.BOT}> what is the latest on Northwind "
-                         f"*Sent using* <@{self.CLAUDE}>",
-                 "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")]}
+        event = {
+            "text": f"<@{self.BOT}> what is the latest on Northwind "
+            f"*Sent using* <@{self.CLAUDE}>",
+            "blocks": [_context_block(f"*Sent using* <@{self.CLAUDE}>")],
+        }
         assert authored_text(event) == f"<@{self.BOT}> what is the latest on Northwind"
         assert parse_bot_command(authored_text(event), self.BOT) is None
 
 
 def _command_bot(mock_config, client):
-    with patch('innieme.slack_bot.AsyncApp') as mock_app:
+    with patch("innieme.slack_bot.AsyncApp") as mock_app:
         mock_app.return_value = Mock(client=client)
         return SlackBot(mock_config)
 
@@ -814,13 +966,30 @@ def _topic(outie_id="U1234567890", name="math"):
     topic = Mock()
     topic.config = Mock(name=name)
     topic.config.name = name
+    topic.config.docs_dir = "/notes"
     topic.outie_config = Mock(outie_id=outie_id)
     return topic
 
 
+def _scan_result(message="On topic 'math': 12 chunks created", duration=(1.0, 3.2)):
+    from innieme.index_status import IndexSnapshot, ScanResult
+
+    snapshot = IndexSnapshot(
+        started_at=0,
+        finished_at=sum(duration),
+        extract_seconds=duration[0],
+        index_seconds=duration[1],
+        files={},
+        failed=[],
+        indexed_count=3,
+        chunk_count=12,
+    )
+    return ScanResult(message=message, snapshot=snapshot)
+
+
 @pytest.mark.asyncio
 async def test_rescan_command_rebuilds_the_index(mock_config):
-    """"@bot rescan" re-vectorizes without a restart and reports the result"""
+    """ "@bot rescan" re-vectorizes without a restart and reports the result"""
     client = Mock()
     client.chat_postMessage = AsyncMock()
     client.reactions_add = AsyncMock()
@@ -828,14 +997,16 @@ async def test_rescan_command_rebuilds_the_index(mock_config):
     bot = _command_bot(mock_config, client)
 
     topic = _topic()
-    topic.scan_and_vectorize = AsyncMock(return_value="On topic 'math': 12 chunks created")
+    topic.scan = AsyncMock(return_value=_scan_result())
     event = {"channel": "C1234567890", "user": "U1234567890", "ts": "111.1"}
 
     await bot.run_bot_command("rescan", topic, event, client)
 
-    topic.scan_and_vectorize.assert_awaited_once()
+    topic.scan.assert_awaited_once()
     posted = client.chat_postMessage.await_args_list[-1].kwargs
     assert "12 chunks created" in posted["text"]
+    # The scan's own runtime, from its own result.
+    assert posted["text"].startswith("Rescan complete in 4.2s.")
     assert posted["thread_ts"] == "111.1"
     # The working indicator goes on the mention itself and is cleared after.
     client.reactions_add.assert_awaited_once()
@@ -852,7 +1023,7 @@ async def test_failed_rescan_says_the_old_index_is_still_serving(mock_config):
     bot = _command_bot(mock_config, client)
 
     topic = _topic()
-    topic.scan_and_vectorize = AsyncMock(side_effect=RuntimeError("embeddings down"))
+    topic.scan = AsyncMock(side_effect=RuntimeError("embeddings down"))
     event = {"channel": "C1234567890", "user": "U1234567890", "ts": "111.1"}
 
     await bot.run_bot_command("rescan", topic, event, client)
@@ -875,7 +1046,7 @@ async def test_a_failed_success_post_is_not_reported_as_a_failed_rescan(mock_con
     bot = _command_bot(mock_config, client)
 
     topic = _topic()
-    topic.scan_and_vectorize = AsyncMock(return_value="On topic 'math': 12 chunks created")
+    topic.scan = AsyncMock(return_value=_scan_result())
 
     with pytest.raises(RuntimeError):
         await bot.rescan(topic, "C1234567890", "111.1", "111.1")
@@ -888,24 +1059,255 @@ async def test_a_failed_success_post_is_not_reported_as_a_failed_rescan(mock_con
 
 
 @pytest.mark.asyncio
-async def test_commands_are_outie_only(mock_config):
-    """Anyone in the channel can mention the bot, so commands must be gated"""
+async def test_quit_is_outie_only(mock_config):
+    """Anyone in the channel can mention the bot, so shutdown must be gated"""
     client = Mock()
     client.chat_postMessage = AsyncMock()
     bot = _command_bot(mock_config, client)
 
     topic = _topic(outie_id="U1234567890")
-    topic.scan_and_vectorize = AsyncMock()
     bot.stop = AsyncMock()
     event = {"channel": "C1234567890", "user": "U0INTRUDER", "ts": "111.1"}
 
-    await bot.run_bot_command("rescan", topic, event, client)
     await bot.run_bot_command("quit", topic, event, client)
 
-    topic.scan_and_vectorize.assert_not_awaited()
     bot.stop.assert_not_awaited()
-    for call in client.chat_postMessage.await_args_list:
-        assert "only available to the outie" in call.kwargs["text"]
+    assert (
+        "only available to the outie"
+        in client.chat_postMessage.await_args.kwargs["text"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_rescan_is_open_to_everyone(mock_config):
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    client.reactions_add = AsyncMock()
+    client.reactions_remove = AsyncMock()
+    bot = _command_bot(mock_config, client)
+
+    topic = _topic(outie_id="U1234567890")
+    topic.scan = AsyncMock(return_value=_scan_result())
+    event = {"channel": "C1234567890", "user": "U0ANYONE", "ts": "111.1"}
+
+    await bot.run_bot_command("rescan", topic, event, client)
+
+    topic.scan.assert_awaited_once()
+    assert (
+        "only available to the outie"
+        not in client.chat_postMessage.await_args.kwargs["text"]
+    )
+
+
+# --- status -------------------------------------------------------------------
+
+
+def _status_bot(mock_config):
+    client = Mock()
+    client.chat_postMessage = AsyncMock()
+    client.chat_postEphemeral = AsyncMock()
+    client.reactions_add = AsyncMock()
+    client.reactions_remove = AsyncMock()
+    return _command_bot(mock_config, client), client
+
+
+def _status_topic(freshness_effect=None):
+    """A topic whose index has 2 changed files, one with a hostile name."""
+    from innieme.index_status import FileStamp, IndexFreshness, IndexSnapshot
+
+    topic = _topic(outie_id="U1234567890")
+    snap = IndexSnapshot(
+        started_at=0,
+        finished_at=0,
+        extract_seconds=1.0,
+        index_seconds=2.0,
+        files={"/notes/Northwind.md": FileStamp(1, 1)},
+        failed=["/notes/broken.pdf"],
+        indexed_count=1,
+        chunk_count=4,
+    )
+    topic.index_snapshot = snap
+    fresh = IndexFreshness(
+        checked_at=0,
+        snapshot=snap,
+        modified=["/notes/Northwind.md"],
+        added=["/notes/<!channel>&`x`.md"],
+    )
+    topic.explicit_freshness = AsyncMock(
+        side_effect=freshness_effect, return_value=fresh
+    )
+    return topic
+
+
+def _event(user):
+    return {"channel": "C1", "user": user, "ts": "1.1"}
+
+
+def test_status_is_a_command():
+    assert parse_bot_command("<@U0BOT> status", "U0BOT") == "status"
+    assert parse_bot_command("<@U0BOT> what is the status?", "U0BOT") is None
+
+
+@pytest.mark.asyncio
+async def test_status_from_anyone_posts_counts_and_no_names(mock_config):
+    bot, client = _status_bot(mock_config)
+    topic = _status_topic()
+
+    await bot.run_bot_command("status", topic, _event("U0ANYONE"), client)
+
+    text = client.chat_postMessage.await_args.kwargs["text"]
+    assert client.chat_postMessage.await_args.kwargs["thread_ts"] == "1.1"
+    assert "4 chunks" in text and "2 files changed since" in text
+    assert "Could not be read: 1 file" in text
+    assert "Northwind" not in text and "broken" not in text
+    client.chat_postEphemeral.assert_not_awaited()
+    client.reactions_remove.assert_awaited_once()
+
+
+def _block_text(kwargs):
+    blocks = kwargs["blocks"]
+    assert all(b["text"]["type"] == "plain_text" for b in blocks)  # never parsed
+    return "\n".join(b["text"]["text"] for b in blocks)
+
+
+@pytest.mark.asyncio
+async def test_status_from_outie_sends_names_privately_and_literally(mock_config):
+    bot, client = _status_bot(mock_config)
+    topic = _status_topic()
+
+    await bot.run_bot_command("status", topic, _event("U1234567890"), client)
+
+    public = client.chat_postMessage.await_args.kwargs["text"]
+    assert "Northwind" not in public  # counts only, even for the outie
+    private = client.chat_postEphemeral.await_args.kwargs
+    assert private["user"] == "U1234567890" and private["thread_ts"] == "1.1"
+    names = _block_text(private)
+    assert "Northwind.md" in names and "broken.pdf" in names
+    # The hostile name is reported exactly as it is, characters and all...
+    assert "<!channel>&`x`.md" in names
+    # ...and the mrkdwn fallback names no file at all.
+    assert "Northwind" not in private["text"] and "<!channel>" not in private["text"]
+
+
+def test_plain_text_blocks_split_long_reports_without_losing_names():
+    from innieme.index_status import IndexFreshness, IndexSnapshot, describe_names
+    from innieme.slack_bot import _plain_text_blocks
+
+    snap = IndexSnapshot(
+        started_at=0,
+        finished_at=0,
+        extract_seconds=0,
+        index_seconds=0,
+        files={},
+        failed=[],
+        indexed_count=0,
+        chunk_count=0,
+    )
+    long = "n" * 180
+    fresh = IndexFreshness(
+        0,
+        snap,
+        modified=[f"/notes/{long}-{i:02d}.md" for i in range(20)],
+        added=["/notes/brand-new.md"],
+        removed=["/notes/gone.md"],
+    )
+    report = describe_names(snap, fresh, "/notes", quote=str)
+    assert len(report) > 3000
+    blocks = _plain_text_blocks(report)
+    assert len(blocks) > 1
+    assert all(len(b["text"]["text"]) <= 3000 for b in blocks)
+    joined = "\n".join(b["text"]["text"] for b in blocks)
+    assert joined == report  # nothing cut, nothing dropped
+    for i in range(20):
+        assert f"{long}-{i:02d}.md" in joined
+    assert "brand-new.md" in joined and "gone.md" in joined
+
+
+def test_plain_text_blocks_split_a_single_overlong_line():
+    from innieme.slack_bot import _plain_text_blocks
+
+    blocks = _plain_text_blocks("x" * 7000)
+    assert [len(b["text"]["text"]) for b in blocks] == [3000, 3000, 1000]
+
+
+@pytest.mark.asyncio
+async def test_status_names_never_reach_thread_context(mock_config):
+    """Ephemeral messages are not returned by conversations.replies"""
+    bot, client = _status_bot(mock_config)
+    topic = _status_topic()
+    thread = []
+
+    async def post(**kwargs):
+        thread.append({"user": "U0BOT", "text": kwargs["text"]})
+
+    async def replies(**kwargs):
+        return {"messages": list(thread)}
+
+    client.chat_postMessage = AsyncMock(side_effect=post)
+    client.conversations_replies = AsyncMock(side_effect=replies)
+    client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
+
+    await bot.run_bot_command("status", topic, _event("U1234567890"), client)
+    context = await bot.get_thread_context("C1", "1.1")
+
+    client.chat_postEphemeral.assert_awaited_once()
+    assert "Northwind" in _block_text(client.chat_postEphemeral.await_args.kwargs)
+    assert context and all("Northwind" not in m["content"] for m in context)
+
+
+@pytest.mark.asyncio
+async def test_status_private_send_failure_keeps_names_private(mock_config):
+    bot, client = _status_bot(mock_config)
+    client.chat_postEphemeral = AsyncMock(side_effect=RuntimeError("not_in_channel"))
+    topic = _status_topic()
+
+    await bot.run_bot_command("status", topic, _event("U1234567890"), client)
+
+    assert client.chat_postMessage.await_count == 1
+    assert "Northwind" not in client.chat_postMessage.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_status_with_freshness_unavailable_still_reports_counts(mock_config):
+    from innieme.index_status import FreshnessUnavailable
+
+    bot, client = _status_bot(mock_config)
+    topic = _status_topic(freshness_effect=FreshnessUnavailable("timed out"))
+
+    await bot.run_bot_command("status", topic, _event("U0ANYONE"), client)
+
+    text = client.chat_postMessage.await_args.kwargs["text"]
+    assert "4 chunks" in text
+    assert "could not be determined" in text
+    assert "timed out" not in text
+
+
+@pytest.mark.asyncio
+async def test_status_report_failure_is_generic(mock_config):
+    bot, client = _status_bot(mock_config)
+    topic = _status_topic(freshness_effect=ValueError("/secret/path exploded"))
+
+    await bot.run_bot_command("status", topic, _event("U1234567890"), client)
+
+    text = client.chat_postMessage.await_args.kwargs["text"]
+    assert "couldn't check the index status" in text and "logs" in text
+    assert "/secret/path" not in text
+    client.chat_postEphemeral.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_status_before_any_scan(mock_config):
+    bot, client = _status_bot(mock_config)
+    topic = _topic()
+    topic.index_snapshot = None
+    topic.explicit_freshness = AsyncMock(return_value=None)
+
+    await bot.run_bot_command("status", topic, _event("U1234567890"), client)
+
+    assert (
+        "No scan has completed yet" in client.chat_postMessage.await_args.kwargs["text"]
+    )
+    client.chat_postEphemeral.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -936,8 +1338,12 @@ async def test_mention_routes_a_command_instead_of_querying_the_model(mock_confi
     bot.run_bot_command = AsyncMock()
     bot.process_and_respond = AsyncMock()
 
-    event = {"channel": "C1234567890", "user": "U1234567890",
-             "text": "<@U0BOT> rescan", "ts": "111.1"}
+    event = {
+        "channel": "C1234567890",
+        "user": "U1234567890",
+        "text": "<@U0BOT> rescan",
+        "ts": "111.1",
+    }
     await bot.handle_mention(event, AsyncMock(), client)
 
     bot.run_bot_command.assert_awaited_once()
@@ -946,7 +1352,9 @@ async def test_mention_routes_a_command_instead_of_querying_the_model(mock_confi
 
 
 @pytest.mark.asyncio
-async def test_command_in_a_followed_thread_is_not_also_answered_as_a_question(mock_config):
+async def test_command_in_a_followed_thread_is_not_also_answered_as_a_question(
+    mock_config,
+):
     """Slack sends app_mention *and* message for the same text.
 
     handle_mention runs the command; if handle_message also treated it as a
@@ -962,8 +1370,13 @@ async def test_command_in_a_followed_thread_is_not_also_answered_as_a_question(m
     bot._identify_topic = Mock(return_value=topic)
     bot.process_and_respond = AsyncMock()
 
-    event = {"channel": "C1234567890", "user": "U1234567890", "text": "<@U0BOT> rescan",
-             "ts": "222.2", "thread_ts": "111.1"}
+    event = {
+        "channel": "C1234567890",
+        "user": "U1234567890",
+        "text": "<@U0BOT> rescan",
+        "ts": "222.2",
+        "thread_ts": "111.1",
+    }
     await bot.handle_message(event, AsyncMock(), client)
 
     bot.process_and_respond.assert_not_awaited()
@@ -981,19 +1394,25 @@ async def test_ordinary_mention_still_reaches_the_model(mock_config):
     bot.run_bot_command = AsyncMock()
     bot.process_and_respond = AsyncMock()
 
-    event = {"channel": "C1234567890", "user": "U1234567890",
-             "text": "<@U0BOT> should we rescan the Northwind notes?", "ts": "111.1"}
+    event = {
+        "channel": "C1234567890",
+        "user": "U1234567890",
+        "text": "<@U0BOT> should we rescan the Northwind notes?",
+        "ts": "111.1",
+    }
     await bot.handle_mention(event, AsyncMock(), client)
 
     bot.run_bot_command.assert_not_awaited()
     bot.process_and_respond.assert_awaited_once()
-    assert bot.process_and_respond.await_args.args[2] == "should we rescan the Northwind notes?"
-
+    assert (
+        bot.process_and_respond.await_args.args[2]
+        == "should we rescan the Northwind notes?"
+    )
 
 
 @pytest.mark.asyncio
 async def test_hello_mention_posts_the_card(mock_config):
-    """"@bot hello" replaces the /hello slash command"""
+    """ "@bot hello" replaces the /hello slash command"""
     client = Mock()
     client.auth_test = AsyncMock(return_value={"user_id": "U0BOT"})
     client.chat_postMessage = AsyncMock()
@@ -1001,8 +1420,12 @@ async def test_hello_mention_posts_the_card(mock_config):
     bot._identify_topic = Mock(return_value=_topic())
     bot.process_and_respond = AsyncMock()
 
-    event = {"channel": "C1234567890", "user": "U1234567890",
-             "text": "<@U0BOT> hello", "ts": "111.1"}
+    event = {
+        "channel": "C1234567890",
+        "user": "U1234567890",
+        "text": "<@U0BOT> hello",
+        "ts": "111.1",
+    }
     await bot.handle_mention(event, AsyncMock(), client)
 
     posted = client.chat_postMessage.await_args_list[-1].kwargs
@@ -1023,8 +1446,12 @@ async def test_hello_is_open_to_everyone(mock_config):
     bot = _command_bot(mock_config, client)
     bot._identify_topic = Mock(return_value=_topic(outie_id="U1234567890"))
 
-    event = {"channel": "C1234567890", "user": "U0SOMEONEELSE",
-             "text": "<@U0BOT> hello", "ts": "111.1"}
+    event = {
+        "channel": "C1234567890",
+        "user": "U0SOMEONEELSE",
+        "text": "<@U0BOT> hello",
+        "ts": "111.1",
+    }
     await bot.handle_mention(event, AsyncMock(), client)
 
     posted = client.chat_postMessage.await_args_list[-1].kwargs
@@ -1034,7 +1461,7 @@ async def test_hello_is_open_to_everyone(mock_config):
 
 @pytest.mark.asyncio
 async def test_hello_works_in_a_channel_with_no_topic(mock_config):
-    """"is this bot alive?" is asked exactly where nothing is configured yet.
+    """ "is this bot alive?" is asked exactly where nothing is configured yet.
 
     /hello needed no topic, so the mention must not answer "not set up" instead.
     """
@@ -1045,12 +1472,18 @@ async def test_hello_works_in_a_channel_with_no_topic(mock_config):
     bot._identify_topic = Mock(return_value=None)
     say = AsyncMock()
 
-    event = {"channel": "C0UNCONFIGURED", "user": "U0ANYONE",
-             "text": "<@U0BOT> hello", "ts": "111.1"}
+    event = {
+        "channel": "C0UNCONFIGURED",
+        "user": "U0ANYONE",
+        "text": "<@U0BOT> hello",
+        "ts": "111.1",
+    }
     await bot.handle_mention(event, say, client)
 
     say.assert_not_awaited()
-    assert client.chat_postMessage.await_args_list[-1].kwargs["blocks"] == hello_blocks()
+    assert (
+        client.chat_postMessage.await_args_list[-1].kwargs["blocks"] == hello_blocks()
+    )
 
 
 @pytest.mark.asyncio
@@ -1064,8 +1497,12 @@ async def test_a_question_in_an_unconfigured_channel_still_says_not_set_up(mock_
     bot.process_and_respond = AsyncMock()
     say = AsyncMock()
 
-    event = {"channel": "C0UNCONFIGURED", "user": "U0ANYONE",
-             "text": "<@U0BOT> what is the Northwind deal size?", "ts": "111.1"}
+    event = {
+        "channel": "C0UNCONFIGURED",
+        "user": "U0ANYONE",
+        "text": "<@U0BOT> what is the Northwind deal size?",
+        "ts": "111.1",
+    }
     await bot.handle_mention(event, say, client)
 
     say.assert_awaited_once()

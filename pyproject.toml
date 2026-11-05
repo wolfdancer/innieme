@@ -46,3 +46,7 @@ innieme = "innieme.cli.run_unified_bot:main"
 py-modules = []
 packages = ["innieme"]
 package-dir = {"innieme" = "src/innieme"}
+[tool.isort]
+# Match black, which this repo also runs: without a profile the two disagree
+# on how to wrap long imports and cannot both pass.
+profile = "black"
