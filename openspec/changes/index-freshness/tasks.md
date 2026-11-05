@@ -28,7 +28,7 @@ The branch `shane/innieme-index-freshness-b802b6` (closed PR wolfdancer/innieme#
 ## 4. Integration
 
 - [x] 4.1 Run the full suite and both flake8 passes; verify all pass
-- [ ] 4.2 Against a real Slack workspace, edit a note then run `@bot status` and `@bot rescan` as both an outie and another member; verify counts, names and timing match the specs and a question about the edited note is hedged
+- [x] 4.2 Against a real Slack workspace, edit a note then run `@bot status` and `@bot rescan` as both an outie and another member; verify counts, names and timing match the specs and a question about the edited note is hedged
 
 ## 5. Review fixes
 
