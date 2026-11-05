@@ -38,6 +38,7 @@ The branch `shane/innieme-index-freshness-b802b6` (closed PR wolfdancer/innieme#
 - [x] 5.4 Review loop 4: `/code-review` (task 3.2 now verifies the freshness-unavailable status scenario)
 - [x] 5.5 Implementation review loop 1: shared in-flight slot for routine and explicit checks; filesystem errors reported as unknown, not removed or unchanged; Slack names shown literally in plain_text blocks, one name per line and split across blocks rather than truncated; strict directory walk for the check (unreadable directories are unknown, symlink loops pruned, aliases walked as the glob did); hanging-check test bounded
 - [x] 5.6 Implementation review loop 1 (`/code-review`): unreadable wholly-excluded directories no longer break freshness; directory walk resolves real paths only for symlinks; rescan docstring and CLAUDE.md retrieval wording updated
+- [x] 5.7 Implementation review loop 2: wholesale-exclusion proof limited to a literal prefix + `*` (root needs a bare `*`); concurrency tests wait for the worker to start and finish instead of fixed sleeps
 
 ## Workflow follow-up
 

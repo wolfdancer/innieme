@@ -611,6 +611,27 @@ def _blocking_compute(processor):
     return gate, calls
 
 
+async def _until_called(calls, n=1):
+    """Wait until the worker thread has really started n checks.
+
+    A worker thread may be scheduled late on a busy machine, so asserting a
+    call count right after a short timeout would race it.
+    """
+    deadline = asyncio.get_running_loop().time() + 5
+    while len(calls) < n:
+        assert (
+            asyncio.get_running_loop().time() < deadline
+        ), f"{n} call(s) never started"
+        await asyncio.sleep(0.005)
+
+
+async def _drain(processor):
+    """Wait for the in-flight check to finish, and its callback to run."""
+    if processor._inflight is not None:
+        await asyncio.wait({processor._inflight[1]}, timeout=5)
+    await asyncio.sleep(0)
+
+
 @pytest.mark.asyncio
 async def test_stuck_routine_check_is_not_duplicated(
     document_processor, sample_txt_file
@@ -624,10 +645,11 @@ async def test_stuck_routine_check_is_not_duplicated(
         assert (
             await document_processor.routine_freshness(snap) is None
         )  # shares, no new thread
+        await _until_called(calls)
         assert len(calls) == 1
     finally:
         gate.set()
-    await asyncio.sleep(0.2)
+    await _drain(document_processor)
     # The late result filled the reuse window.
     document_processor.ROUTINE_CHECK_TIMEOUT = 5
     assert (await document_processor.routine_freshness(snap)).is_current
@@ -771,10 +793,11 @@ async def test_overlapping_explicit_checks_share_one_worker_on_a_hung_mount(
             return_exceptions=True,
         )
         assert all(isinstance(r, FreshnessUnavailable) for r in results)
+        await _until_called(calls)
         assert len(calls) == 1  # one stuck worker, however many requests
     finally:
         gate.set()
-    await asyncio.sleep(0.2)
+    await _drain(document_processor)
     document_processor.EXPLICIT_CHECK_TIMEOUT = 5
     assert (await document_processor.explicit_freshness()).is_current
 
@@ -787,7 +810,8 @@ async def test_concurrent_explicit_checks_run_one_after_another(
     gate, calls = _blocking_compute(document_processor)
     first = asyncio.ensure_future(document_processor.explicit_freshness())
     second = asyncio.ensure_future(document_processor.explicit_freshness())
-    await asyncio.sleep(0.05)
+    await _until_called(calls)
+    await asyncio.sleep(0.05)  # give the second a chance to (wrongly) start
     assert len(calls) == 1  # the second waits for the first's worker
     gate.set()
     a, b = await asyncio.gather(first, second)
@@ -1040,6 +1064,7 @@ async def test_repeated_status_timeouts_attach_nothing_to_the_stuck_worker(
             with pytest.raises(FreshnessUnavailable):
                 await document_processor.explicit_freshness()
         assert len(worker._callbacks) == baseline
+        await _until_called(calls)
         assert len(calls) == 1
     finally:
         gate.set()
@@ -1093,6 +1118,7 @@ async def test_repeated_routine_timeouts_attach_nothing_to_the_stuck_worker(
         for _ in range(5):
             assert await document_processor.routine_freshness(snap) is None
         assert len(worker._callbacks) == baseline
+        await _until_called(calls)
         assert len(calls) == 1
     finally:
         gate.set()
