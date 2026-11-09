@@ -34,7 +34,12 @@ Once a message has been handled, including sending any reply it calls for, the b
 - **THEN** the reply is sent to none of them, and the message stays on the server for the next poll
 
 ### Requirement: Messages past retention are deleted
-Any message still on the server whose date is older than `retention_days` (default 30) SHALL be deleted without a reply, and its sender and subject logged.
+Any message still on the server that reached the mailbox more than `retention_days` ago (default 30) SHALL be deleted without a reply, and its sender and subject logged.
+
+#### Scenario: Sender's clock is wrong
+- **GIVEN** a scout's device dates their message 40 days in the past
+- **WHEN** the message arrives
+- **THEN** it is handled normally, because its age is measured from when it reached the mailbox
 
 #### Scenario: Message that keeps failing
 - **GIVEN** a message has failed on every poll for 31 days
@@ -70,7 +75,7 @@ A message from the topic's outie SHALL be deleted without a reply. The outie cop
 A message from a guardian SHALL be answered with a setup note explaining that the bot answers scouts who copy the outie and one of their guardians, unless the guardian's message is a reply in a chain that already contains a setup note from the bot; such a message is deleted without a reply.
 
 #### Scenario: Guardian asks a question
-- **WHEN** a guardian emails the bot for the first time in a thread
+- **WHEN** a guardian emails the bot, not in reply to a setup note
 - **THEN** they receive the setup note and no answer to the question
 
 #### Scenario: Guardian replies to the setup note
@@ -119,19 +124,16 @@ Whether a message's reply chain already contains a setup note, reminder or answe
 - **WHEN** the scout replies to that answer without the outie
 - **THEN** no reminder is sent, because the answer's `References` still carries the reminder
 
-### Requirement: Answers use the quoted history and the new question
-When answering, the model SHALL receive the quoted earlier messages as conversation history in the order they were written, and the newly written text as the question.
-
-#### Scenario: One quoted answer
-- **WHEN** a scout's reply quotes a single earlier bot answer
-- **THEN** the model's conversation history contains that answer
-
 ### Requirement: The question and its context are read from the message
-The bot SHALL use the plain-text part of a message, or its HTML part converted to markdown when there is no plain-text part. The newly written text SHALL be the question and the quoted earlier messages SHALL be given to the model as conversation history. When no quoted part can be found, the whole body SHALL be the question. Signatures SHALL be removed.
+The bot SHALL use the plain-text part of a message, or its HTML part converted to markdown when there is no plain-text part. The newly written text SHALL be the question and the quoted earlier messages SHALL be given to the model as conversation history, in the order they were written. When no quoted part can be found, the whole body SHALL be the question. Signatures SHALL be removed.
 
 #### Scenario: Reply with quoted history
 - **WHEN** a scout replies above the quoted previous answer
 - **THEN** the model receives the new text as the question and the quoted answer as history
+
+#### Scenario: One quoted answer
+- **WHEN** a scout's reply quotes a single earlier bot answer
+- **THEN** the model's conversation history contains that answer
 
 #### Scenario: HTML-only message
 - **WHEN** a message has only an HTML part containing a bulleted list

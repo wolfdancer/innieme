@@ -13,7 +13,7 @@
 
 ## 3. Model failures
 
-- [ ] 3.1 Add opt-in `raise_errors=False` to `ConversationEngine.process_query` and `Topic.process_query`; verify with a test where the real agent's model raises (PydanticAI `FunctionModel`) that `raise_errors=True` propagates the exception and the default still returns the apology, and that existing Slack/Discord tests pass unchanged
+- [ ] 3.1 Add opt-in `raise_errors=False` to `ConversationEngine.process_query`; verify with a test where the real agent's model raises (PydanticAI `FunctionModel`) that `raise_errors=True` propagates the exception and the default still returns the apology, and that existing Slack/Discord tests pass unchanged
 
 ## 4. Reading messages
 
@@ -26,7 +26,7 @@
 - [ ] 5.1 Implement auto-generated detection (all headers in the spec, empty return path, delivery reports) and bounce recipient extraction; verify each signal with a fixture test
 - [ ] 5.2 Implement sender classification (unknown / outie / guardian / scout) and the copy rule (outie + one of the scout's own guardians in To/Cc); verify with tests including another scout's guardian not counting
 - [ ] 5.3 Implement bot Message-IDs `<innieme.{kind}.{uuid}@domain>` and prior-reply detection from `References`/`In-Reply-To`; verify in tests that a reply to a reminder gets no second reminder, two sibling replies to the same original each get one, and reminder → corrected question → answer → rule-breaking reply gets no reminder
-- [ ] 5.4 Implement retention by `Date`, falling back to `Received`, undatable never expiring; verify with tests at 29/31 days and with no date
+- [ ] 5.4 Implement retention by the newest `Received` header, falling back to `Date`, undatable never expiring; verify with tests at 29/31 days, a 40-days-old `Date` with a fresh `Received` (not expired), and no date
 
 ## 6. Replying
 
@@ -37,8 +37,8 @@
 ## 7. Mailbox and poll loop
 
 - [ ] 7.1 Implement the POP3 client over `asyncio.to_thread`: read session (UIDL + RETR + QUIT) and delete session (UIDL lookup + DELE + QUIT); verify with tests against a fake `poplib.POP3_SSL`, including a UID missing at delete time
-- [ ] 7.2 Implement `EmailBot`: scan topics at start, one poll loop per topic at `poll_interval_seconds`, handle each message per the classification order, delete only after SMTP success, keep failed messages, skip UIDs in flight, log every message's classification and action, isolate one mailbox's errors from the others; verify with tests using fake POP3/SMTP and `FakeEmbeddings`, covering answer, reminder, setup note, outie, unknown, auto-generated, SMTP failure and partial recipient refusal (message kept, nothing sent) and model failure via `raise_errors=True` (message kept, nothing sent)
-- [ ] 7.3 Verify answers go through `Topic.process_query` with the parsed history, so freshness labels reach the model as on Slack (test with a real `ConversationEngine` and a recording model asserting the agent receives the question and a history containing a single quoted answer)
+- [ ] 7.2 Implement `EmailBot`: scan topics at start, one poll loop per topic at `poll_interval_seconds`, handle each message per the classification order, delete each message in its own session right after it is handled and only after SMTP success, keep failed messages, answer via `topic.conversation_engine.process_query` (not `Topic.process_query`, so no `active_threads`/`thread_history` entries accumulate), log every message's classification and action, isolate one mailbox's errors from the others; verify with tests using fake POP3/SMTP and `FakeEmbeddings`, covering answer, reminder, setup note, outie, unknown, auto-generated, SMTP failure and partial recipient refusal (message kept, nothing sent) and model failure via `raise_errors=True` (message kept, nothing sent)
+- [ ] 7.3 Verify answers go through the topic's `ConversationEngine` with the parsed history, so freshness labels reach the model as on Slack (test with a real `ConversationEngine` and a recording model asserting the agent receives the question and a history containing a single quoted answer)
 
 ## 8. CLI and docs
 
@@ -49,6 +49,10 @@
 
 - [ ] 9.1 Run `uv run pytest` and the hard-fail flake8 pass; both clean
 - [ ] 9.2 Manual check against the Dynadot mailbox with a test config: a scout email copying outie + guardian is answered in-thread with correct Cc; one missing the outie gets a single reminder; an unknown sender's mail disappears; logs show each action
+
+## 10. Review fixes
+
+- [x] 10.1 Review loop 1: retention measured from the newest `Received` header, not the sender's `Date`; delete each message right after handling instead of batching; answers via the topic's engine directly so no thread state accumulates; merged the duplicate quoted-history requirement; reworded the guardian scenario to reply chains; removed redundant in-flight UID tracking; fixed the stale "ConversationEngine untouched" claim
 
 ## Workflow follow-up
 

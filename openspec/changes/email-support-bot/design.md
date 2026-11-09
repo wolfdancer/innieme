@@ -39,16 +39,16 @@ EmailBotConfig        tokens-style secrets inline; llm/embedding/retrieval field
                                              smtp_host, smtp_port=587}
                                    scouts[]: {email, guardians[]}
 ```
-`outie_id` as a property keeps `ConversationEngine` untouched. Addresses are compared case-insensitively and normalized at load. Validation per the spec (scout without guardians, scout/guardian overlap, mailbox address colliding with a person). `docs_dir` existence and misplaced-`docs_exclude` checks are copied from the Slack config. Alternative considered: extracting a shared base config for all three platforms — worthwhile, but a refactor of two working platforms; out of scope here.
+`outie_id` as a property lets `ConversationEngine` read the outie without changes to how it does so. Addresses are compared case-insensitively and normalized at load. Validation per the spec (scout without guardians, scout/guardian overlap, mailbox address colliding with a person). `docs_dir` existence and misplaced-`docs_exclude` checks are copied from the Slack config. Alternative considered: extracting a shared base config for all three platforms — worthwhile, but a refactor of two working platforms; out of scope here.
 
 ### POP3 sessions: short, keyed by UIDL
 POP3 only commits `DELE` on a clean `QUIT`, and servers drop idle sessions; holding one open while the model answers (seconds to a minute per message) risks rolling back every delete in that session and re-answering. So each poll:
 
 1. **Read session**: connect, `UIDL`, fetch every message (`RETR`), `QUIT`.
 2. Handle each message in memory (classify → maybe reply).
-3. **Delete session(s)**: for each handled message, connect, `UIDL`, `DELE` the matching number, `QUIT`. Batched per poll; a message is deleted only after its reply was accepted by SMTP.
+3. **Delete session**: right after each message is handled, connect, `UIDL`, `DELE` the matching number, `QUIT`. One short session per message, not one batch at the end of the poll, so a crash mid-poll can duplicate at most the one reply in flight. A message is deleted only after its reply was accepted by SMTP.
 
-UIDL identifies a message across sessions; message numbers do not. A message that failed stays, is fetched again next poll. Within a run, UIDs currently being handled are skipped so a slow poll cannot overlap the next. `poplib`/`smtplib` are blocking stdlib modules, called through `asyncio.to_thread` — no new network dependency. Alternative: `aioimaplib`-style async libraries — none needed for POP3 at this volume.
+UIDL identifies a message across sessions; message numbers do not. A message that failed stays, is fetched again next poll. Each topic's loop awaits its whole poll before sleeping, so polls of one mailbox never overlap and no in-flight bookkeeping is needed. `poplib`/`smtplib` are blocking stdlib modules, called through `asyncio.to_thread` — no new network dependency. Alternative: `aioimaplib`-style async libraries — none needed for POP3 at this volume.
 
 ### Classification order
 ```
@@ -64,13 +64,15 @@ outie + own guardian in To/Cc? ─no─▶ reminder unless one is in its chain �
       │yes
 answer ─▶ delete
 ```
-Auto-generated is checked first so a scout's out-of-office never earns a reminder. Retention (older than `retention_days` by the `Date` header, falling back to the newest `Received` date; undatable messages never expire) is checked before all of it.
+Auto-generated is checked first so a scout's out-of-office never earns a reminder. Retention (older than `retention_days` by the newest `Received` header, which the receiving server stamps, falling back to `Date`, which the sender's clock sets; undatable messages never expire) is checked before all of it.
 
 ### Earlier bot replies via the bot's own Message-IDs
 Outgoing replies get `Message-ID: <innieme.{kind}.{uuid}@{mailbox domain}>` with `kind` ∈ `answer`, `reminder`, `setup`. A reply carries its ancestors' IDs in `References`/`In-Reply-To`, so "this chain already has a reminder" is a regex over two headers. Stateless and restart-proof. Headers record ancestry, not the whole thread: two sibling replies to the same original each look like the first, so each can earn a note. The spec states this limitation. Alternative: an in-memory set — lost on restart, and still per process.
 
 ### Model failures
-`ConversationEngine._generate_response` catches agent exceptions and returns an apology string, which is right for chat but would make the email bot send the apology and delete the question. Add an opt-in `raise_errors: bool = False` to `ConversationEngine.process_query` (passed through `Topic.process_query`); when true the exception propagates. Discord and Slack keep the default. The email bot passes `True`, so a model failure leaves the message for the next poll. Alternative: the email bot detects the apology text — brittle.
+`ConversationEngine._generate_response` catches agent exceptions and returns an apology string, which is right for chat but would make the email bot send the apology and delete the question. Add an opt-in `raise_errors: bool = False` to `ConversationEngine.process_query`; when true the exception propagates. Discord and Slack keep the default. The email bot passes `True`, so a model failure leaves the message for the next poll.
+
+The email bot calls `topic.conversation_engine.process_query` directly, not `Topic.process_query`: the latter adds the thread to `active_threads` and `thread_history`, chat bookkeeping for Slack/Discord thread-following and summaries. Email has neither feature and rebuilds history from the quote each time, so going through `Topic` would only grow both collections for the life of the process, on success and failure alike.
 
 ### Reading a message
 - Body: `text/plain` part if present, else `text/html` converted with **markdownify** (MIT); images dropped, links kept. Converted blockquotes become `>` lines, so one splitter handles both.
