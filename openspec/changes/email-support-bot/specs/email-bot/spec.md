@@ -26,7 +26,7 @@ Once a message has been handled, including sending any reply it calls for, the b
 - **THEN** the question is deleted from the mailbox after the answer is sent
 
 #### Scenario: Handling fails
-- **WHEN** the model or the outgoing mail server fails while handling a message
+- **WHEN** the model fails, or the outgoing mail server fails temporarily, while handling a message
 - **THEN** no reply is sent, the message stays on the server, and it is handled again on the next poll
 
 #### Scenario: A recipient is refused
@@ -76,7 +76,7 @@ A message from the topic's outie SHALL be deleted without a reply. The outie cop
 - **WHEN** the outie replies to a scout and copies the bot
 - **THEN** the bot sends nothing and deletes the message
 
-### Requirement: Guardians receive a one-time setup note
+### Requirement: Guardians receive a setup note
 A message from a guardian SHALL be answered with a setup note explaining that the bot answers scouts who copy the outie and one of their guardians, unless the guardian's message is a reply in a chain that already contains a setup note from the bot; such a message is deleted without a reply.
 
 #### Scenario: Guardian asks a question
@@ -99,7 +99,7 @@ A message from a scout SHALL be answered from the topic's documents only when th
 - **WHEN** a scout copies the outie and a guardian listed only for a different scout
 - **THEN** the question is not answered and the rule reminder applies
 
-### Requirement: Scouts who break the rule receive a one-time reminder
+### Requirement: Scouts who break the rule receive a reminder
 When a scout's message does not meet the copy rule, the bot SHALL reply with a reminder of the rule that names that scout's guardians, unless the scout's message is a reply in a chain that already contains a reminder from the bot; such a message is deleted without a reply.
 
 #### Scenario: Outie missing

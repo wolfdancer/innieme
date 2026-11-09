@@ -54,6 +54,7 @@
 
 - [x] 10.1 Review loop 1: retention measured from the newest `Received` header, not the sender's `Date`; delete each message right after handling instead of batching; answers via the topic's engine directly so no thread state accumulates; merged the duplicate quoted-history requirement; reworded the guardian scenario to reply chains; removed redundant in-flight UID tracking; fixed the stale "ConversationEngine untouched" claim
 - [x] 10.2 Review loop 2: raw HTML disabled when rendering replies; in-memory skip of messages whose reply was permanently refused, so the model is not re-run every poll
+- [x] 10.3 Review loop 3: dropped "one-time" from requirement titles and the proposal; scoped the retry scenario to temporary failures; listed `markdown-it-py` in the proposal's dependencies
 
 ## Workflow follow-up
 

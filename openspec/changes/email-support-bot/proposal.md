@@ -10,12 +10,12 @@ Scouts need a way to ask the troop's knowledge base questions without joining a 
 - Classify every incoming message by sender and recipients:
   - auto-generated mail (out-of-office, lists, bounces) and unknown senders: deleted, logged;
   - the outie: no reply (they are answering the scout and copying the bot);
-  - a guardian: a one-time setup note explaining the bot is for scouts who copy the outie and a guardian;
+  - a guardian: a setup note (not repeated in reply to one) explaining the bot is for scouts who copy the outie and a guardian;
   - a scout who copied the outie and at least one of **their own** guardians: answered from the topic's documents;
-  - a scout who did not: a one-time rule reminder naming their guardians.
+  - a scout who did not: a rule reminder naming their guardians (not repeated in reply to one).
 - Answers go to the scout, Cc the outie and the guardians who were on the scout's email, threaded with `In-Reply-To`/`References`, marked `Auto-Submitted: auto-replied`, as plain text plus HTML.
 - Read email the way a model can use it: HTML converted to markdown, the new text taken as the question and the quoted history as thread context, signatures stripped, attachments ignored (and the reply says so).
-- No persistent store: every message is deleted from the server once handled; a message whose handling fails stays and is retried next poll; anything still on the server after `retention_days` (default 30) is deleted. A reply goes to all its recipients or none. Whether a reply chain already has a setup note or reminder is read from the Message-IDs of the bot's own replies in its headers.
+- No persistent store: every message is deleted from the server once handled; a message whose handling fails stays and is retried next poll (a reply the mail server permanently refuses is not retried until restart); anything still on the server after `retention_days` (default 30) is deleted. A reply goes to all its recipients or none. Whether a reply chain already has a setup note or reminder is read from the Message-IDs of the bot's own replies in its headers.
 - New config file `email_config.yaml`: bot → outies (`outie_email`) → topics, each with a `mailbox` (POP3/SMTP host, port, address, password) and `scouts`, each with their own `guardians`.
 - No admin commands over email in this change.
 
@@ -30,6 +30,6 @@ Scouts need a way to ask the troop's knowledge base questions without joining a 
 ## Impact
 
 - New: `src/innieme/email_bot.py`, `src/innieme/email_bot_config.py`, `src/innieme/cli/run_email_bot.py`, `email_config.example.yaml`, tests.
-- Changed: `cli/run_unified_bot.py` (`email` platform), `pyproject.toml` (`innieme_email_bot` entry point; `markdownify` and a quote-splitting dependency via `uv add`), `.gitignore` (`/email_config.yaml`), `CLAUDE.md`.
+- Changed: `cli/run_unified_bot.py` (`email` platform), `pyproject.toml` (`innieme_email_bot` entry point; `markdownify`, `markdown-it-py` and a quote-splitting dependency via `uv add`), `.gitignore` (`/email_config.yaml`), `CLAUDE.md`.
 - Reused: `Topic`, `ConversationEngine`, `DocumentProcessor`. One opt-in addition: `process_query` can re-raise model errors instead of returning an apology, so a failed answer leaves the email for retry; Discord and Slack behavior is unchanged. `Topic` reads `outie_config.bot.*` fields, so the email config must expose the same bot-level model/key fields.
 - Operational: messages are deleted permanently from the mailbox; the bot's logs are the only record of what arrived. Uses stdlib `poplib`/`smtplib` via `asyncio.to_thread`.
