@@ -19,7 +19,7 @@ Each topic SHALL have exactly one mailbox. The bot SHALL check every topic's mai
 - **THEN** the error is logged, other topics' mailboxes are still checked, and the next poll tries again
 
 ### Requirement: Handled messages are deleted from the server
-Once a message has been handled, including sending any reply it calls for, the bot SHALL delete it from the server permanently. A message whose handling fails SHALL be left on the server and tried again on the next poll. The bot SHALL keep no copy of messages outside the mailbox.
+Once a message has been handled, including sending any reply it calls for, the bot SHALL delete it from the server permanently. A message whose handling fails SHALL be left on the server and tried again on the next poll, except that a reply permanently refused by the mail server is not retried until the bot restarts. The bot SHALL keep no copy of messages outside the mailbox.
 
 #### Scenario: Answered question
 - **WHEN** a scout's question is answered
@@ -31,7 +31,12 @@ Once a message has been handled, including sending any reply it calls for, the b
 
 #### Scenario: A recipient is refused
 - **WHEN** the outgoing mail server refuses any one of a reply's recipients
-- **THEN** the reply is sent to none of them, and the message stays on the server for the next poll
+- **THEN** the reply is sent to none of them, and the message stays on the server
+
+#### Scenario: A recipient is permanently refused
+- **GIVEN** the mail server permanently rejects a guardian's address
+- **WHEN** the following polls run
+- **THEN** the message is not answered again until the bot restarts, and is deleted once past retention
 
 ### Requirement: Messages past retention are deleted
 Any message still on the server that reached the mailbox more than `retention_days` ago (default 30) SHALL be deleted without a reply, and its sender and subject logged.
