@@ -182,8 +182,12 @@ Every reply SHALL use the subject `Re: <original subject>` (without stacking `Re
 - **THEN** the answer's subject is "Re: Campout gear" and it appears in the same thread in the scout's mail client
 
 ### Requirement: Configuration is validated at startup
-The email configuration SHALL fail to load when a scout has no guardian other than the outie, when an address is listed both as a scout and as a guardian in the same topic, or when a topic's mailbox address is also its outie, a scout or a guardian. The error SHALL name the offending address.
+The email configuration SHALL fail to load when a scout has no guardian other than the outie, when an address is listed both as a scout and as a guardian in the same topic, when a topic's mailbox address is also its outie, a scout or a guardian, or when two topics use the same mailbox account. The error SHALL name the offending address.
 
 #### Scenario: Scout without guardians
 - **WHEN** the config lists a scout with an empty guardians list
 - **THEN** the bot refuses to start and the error names that scout
+
+#### Scenario: Two topics share a mailbox
+- **WHEN** two topics are configured with the same mailbox account
+- **THEN** the bot refuses to start and the error names that mailbox, since each topic would delete or answer the other's mail

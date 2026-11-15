@@ -8,7 +8,7 @@
 ## 2. Configuration
 
 - [ ] 2.1 Add `email_bot_config.py` (`EmailBotConfig` → `OutieConfig` with `outie_email` and `outie_id` property → `TopicConfig` with `mailbox` and `scouts[{email, guardians}]`), bot-level fields matching `SlackBotConfig` plus `poll_interval_seconds=300`, `retention_days=30`, back-references, case-insensitive addresses; verify with tests that a valid config loads and `Topic`/`ConversationEngine` can be built from it with `embedding_model: fake`
-- [ ] 2.2 Add load-time validation (scout without a guardian other than the outie, scout also a guardian, mailbox address equal to outie/scout/guardian, misplaced `docs_exclude`, missing `docs_dir`); verify each case fails in a test whose error names the address
+- [ ] 2.2 Add load-time validation (scout without a guardian other than the outie, scout also a guardian, mailbox address equal to outie/scout/guardian, two topics sharing a mailbox account (same POP3 host, port and username), misplaced `docs_exclude`, missing `docs_dir`); verify each case fails in a test whose error names the address
 - [ ] 2.3 Add `email_config.example.yaml` with comments (Dynadot POP3/SMTP example, scouts with guardians) and `/email_config.yaml` to `.gitignore`; verify the example loads in a test
 
 ## 3. Model failures
@@ -31,14 +31,14 @@
 ## 6. Replying
 
 - [ ] 6.1 Compose replies: recipients from config only (answer: To scout, Cc outie + guardians present on the original), `Re:` without stacking, `In-Reply-To`/`References` (falling back to incoming `In-Reply-To` when `References` is absent), `Auto-Submitted: auto-replied`, plain + HTML parts with raw HTML disabled; verify with tests asserting headers, that `<img src=…>` in model output is escaped in the HTML part, the `References` fallback, and that an extra Cc'd friend is excluded
-- [ ] 6.2 Implement all-or-nothing SMTP sending (`MAIL FROM`, `RCPT TO` per recipient, `RSET` and fail on any refusal, `DATA` only when all accepted); add UIDs with a permanent (5xx) refusal to an in-memory skip set; verify with fake SMTP server tests that one of three recipients refused sends no message data, a 5xx refusal is not retried on the next poll, and a 4xx refusal is
+- [ ] 6.2 Implement all-or-nothing SMTP sending (`MAIL FROM`, `RCPT TO` per recipient, `RSET` and fail on any refusal, `DATA` only when all accepted); add UIDs with a permanent (5xx) rejection at `RCPT` or after `DATA` to an in-memory skip set; verify with fake SMTP server tests that one of three recipients refused sends no message data, a 5xx `RCPT` refusal and a 5xx after `DATA` are not retried (no further model call) on the next poll, and a 4xx refusal is
 - [ ] 6.3 Add the setup-note template (placeholder wording) and the fixed two-sentence rule reminder (To the scout only, names the outie and the scout's guardians, no quoted original or model text), attachment notice, and the `outie please` reply; verify rendered text in tests, including that the reminder has only the scout as recipient, is at most two sentences, and contains none of the scout's message
 
 ## 7. Mailbox and poll loop
 
 - [ ] 7.1 Implement the POP3 client over `asyncio.to_thread`: read session (UIDL + RETR + QUIT) and delete session (UIDL lookup + DELE + QUIT); verify with tests against a fake `poplib.POP3_SSL`, including a UID missing at delete time
 - [ ] 7.2 Implement `EmailBot`: scan topics at start, one poll loop per topic at `poll_interval_seconds`, handle each message per the classification order, delete each message in its own session right after it is handled and only after SMTP success, keep failed messages, answer via `topic.conversation_engine.process_query` (not `Topic.process_query`, so no `active_threads`/`thread_history` entries accumulate), log every message's classification and action, isolate one mailbox's errors from the others; verify with tests using fake POP3/SMTP and `FakeEmbeddings`, covering answer, reminder, setup note, outie, unknown, auto-generated, SMTP failure and partial recipient refusal (message kept, nothing sent) and model failure via `raise_errors=True` (message kept, nothing sent)
-- [ ] 7.3 Verify answers go through the topic's `ConversationEngine` with the parsed history, so freshness labels reach the model as on Slack (test with a real `ConversationEngine` and a recording model asserting the agent receives the question and a history containing a single quoted answer)
+- [ ] 7.3 Verify answers go through the topic's `ConversationEngine` with the parsed history, so freshness labels reach the model as on Slack (test with a real `ConversationEngine` and a recording model: scan a source, modify it, send a qualifying email through the adapter, and assert the agent receives the question, a history containing the single quoted answer, the changed-source chunk label and the count-only freshness note)
 
 ## 8. CLI and docs
 
@@ -57,6 +57,7 @@
 - [x] 10.3 Review loop 3: dropped "one-time" from requirement titles and the proposal; scoped the retry scenario to temporary failures; listed `markdown-it-py` in the proposal's dependencies
 - [x] 10.4 Rule reminder settled with the user: To the scout only (copying just the outie still leaves one adult), a fixed two-sentence template with no quoted original or model text
 - [x] 10.5 Outie may also be a scout's guardian (user decision), but never counts as the guardian for the copy rule; each scout needs a guardian besides the outie
+- [x] 10.6 Review loop 5: a 5xx after `DATA` also counts as a permanent failure; reject two topics sharing a mailbox account; the email freshness test modifies a source and asserts the labels
 
 ## Workflow follow-up
 
