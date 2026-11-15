@@ -20,6 +20,7 @@ Two constraints from the existing code:
 - Admin commands over email (`status`, `rescan`, `quit`).
 - Verifying the sender (DKIM/DMARC via `Authentication-Results`). A forged `From` of a scout still needs the outie and a real guardian copied, who then see the answer.
 - Reading attachments.
+- Rate limiting reminders and setup notes (user decision, for now). Each new reply chain can earn one, so a flood of messages — including ones forging a scout's `From` — yields one short reminder each; revisit if it happens.
 - Final wording of the setup note (placeholder until decided); the reminder's shape is fixed below.
 
 ## Decisions
