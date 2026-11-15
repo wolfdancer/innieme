@@ -24,7 +24,7 @@
 ## 5. Classification
 
 - [ ] 5.1 Implement auto-generated detection (all headers in the spec, empty return path, delivery reports) and bounce recipient extraction; verify each signal with a fixture test
-- [ ] 5.2 Implement sender classification (unknown / outie / guardian / scout) and the copy rule (outie + one of the scout's own guardians in To/Cc); verify with tests including another scout's guardian not counting and the outie not counting as the scout's guardian
+- [ ] 5.2 Implement sender classification (unknown / outie / guardian / scout) and the copy rule (outie + one of the scout's own guardians in To/Cc); verify with tests including another scout's guardian not counting, the outie not counting as the scout's guardian, and mail from an outie who is also a guardian getting no setup note
 - [ ] 5.3 Implement bot Message-IDs `<innieme.{kind}.{uuid}@domain>` and prior-reply detection from `References`/`In-Reply-To`; verify in tests that a reply to a reminder gets no second reminder, two sibling replies to the same original each get one, and reminder → corrected question → answer → rule-breaking reply gets no reminder
 - [ ] 5.4 Implement retention by the newest `Received` header, falling back to `Date`, undatable never expiring; verify with tests at 29/31 days, a 40-days-old `Date` with a fresh `Received` (not expired), and no date
 
@@ -32,7 +32,7 @@
 
 - [ ] 6.1 Compose replies: recipients from config only (answer: To scout, Cc outie + guardians present on the original), `Re:` without stacking, `In-Reply-To`/`References` (falling back to incoming `In-Reply-To` when `References` is absent), `Auto-Submitted: auto-replied`, plain + HTML parts with raw HTML disabled; verify with tests asserting headers, that `<img src=…>` in model output is escaped in the HTML part, the `References` fallback, and that an extra Cc'd friend is excluded
 - [ ] 6.2 Implement all-or-nothing SMTP sending (`MAIL FROM`, `RCPT TO` per recipient, `RSET` and fail on any refusal, `DATA` only when all accepted); add UIDs with a permanent (5xx) rejection at `RCPT` or after `DATA` to an in-memory skip set; verify with fake SMTP server tests that one of three recipients refused sends no message data, a 5xx `RCPT` refusal and a 5xx after `DATA` are not retried (no further model call) on the next poll, and a 4xx refusal is
-- [ ] 6.3 Add the setup-note template (placeholder wording) and the fixed two-sentence rule reminder (To the scout only, names the outie and the scout's guardians, no quoted original or model text), attachment notice, and the `outie please` reply; verify rendered text in tests, including that the reminder has only the scout as recipient, is at most two sentences, and contains none of the scout's message
+- [ ] 6.3 Add the setup-note template (placeholder wording) and the fixed two-sentence rule reminder (To the scout only, names the outie and the scout's guardians other than the outie, no quoted original or model text), attachment notice, and the `outie please` reply; verify rendered text in tests, including that the reminder has only the scout as recipient, is at most two sentences, and contains none of the scout's message
 
 ## 7. Mailbox and poll loop
 
@@ -58,6 +58,7 @@
 - [x] 10.4 Rule reminder settled with the user: To the scout only (copying just the outie still leaves one adult), a fixed two-sentence template with no quoted original or model text
 - [x] 10.5 Outie may also be a scout's guardian (user decision), but never counts as the guardian for the copy rule; each scout needs a guardian besides the outie
 - [x] 10.6 Review loop 5: a 5xx after `DATA` also counts as a permanent failure; reject two topics sharing a mailbox account; the email freshness test modifies a source and asserts the labels
+- [x] 10.7 Review loop 5: an outie who is also a guardian gets no setup note; the reminder lists only guardians other than the outie
 
 ## Workflow follow-up
 

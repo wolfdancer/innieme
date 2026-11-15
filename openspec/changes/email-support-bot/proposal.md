@@ -12,7 +12,7 @@ Scouts need a way to ask the troop's knowledge base questions without joining a 
   - the outie: no reply (they are answering the scout and copying the bot);
   - a guardian: a setup note (not repeated in reply to one) explaining the bot is for scouts who copy the outie and a guardian;
   - a scout who copied the outie and at least one of **their own** guardians (a different adult from the outie, who may also be listed as a guardian): answered from the topic's documents;
-  - a scout who did not: a fixed two-sentence rule reminder, to the scout only, naming the outie and their guardians (not repeated in reply to one).
+  - a scout who did not: a fixed two-sentence rule reminder, to the scout only, naming the outie and their other guardians (not repeated in reply to one).
 - Answers go to the scout, Cc the outie and the guardians who were on the scout's email, threaded with `In-Reply-To`/`References`, marked `Auto-Submitted: auto-replied`, as plain text plus HTML.
 - Read email the way a model can use it: HTML converted to markdown, the new text taken as the question and the quoted history as thread context, signatures stripped, attachments ignored (and the reply says so).
 - No persistent store: every message is deleted from the server once handled; a message whose handling fails stays and is retried next poll (a reply the mail server permanently refuses is not retried until restart); anything still on the server after `retention_days` (default 30) is deleted. A reply goes to all its recipients or none. Whether a reply chain already has a setup note or reminder is read from the Message-IDs of the bot's own replies in its headers.

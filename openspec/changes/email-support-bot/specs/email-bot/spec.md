@@ -70,14 +70,19 @@ A message whose sender is not the topic's outie, one of its scouts, or a guardia
 - **THEN** no reply is sent, the message is deleted, and the sender is logged
 
 ### Requirement: Outie mail is not answered
-A message from the topic's outie SHALL be deleted without a reply. The outie copies the bot so that their answer is part of the thread's quoted history.
+A message from the topic's outie SHALL be deleted without a reply, including when the outie is also listed as a scout's guardian. The outie copies the bot so that their answer is part of the thread's quoted history.
 
 #### Scenario: Outie replies to a scout
 - **WHEN** the outie replies to a scout and copies the bot
 - **THEN** the bot sends nothing and deletes the message
 
+#### Scenario: Outie who is also a guardian
+- **GIVEN** the outie is listed as a scout's guardian
+- **WHEN** the outie emails the bot
+- **THEN** no setup note is sent and the message is deleted
+
 ### Requirement: Guardians receive a setup note
-A message from a guardian SHALL be answered with a setup note explaining that the bot answers scouts who copy the outie and one of their guardians, unless the guardian's message is a reply in a chain that already contains a setup note from the bot; such a message is deleted without a reply.
+A message from a guardian other than the outie SHALL be answered with a setup note explaining that the bot answers scouts who copy the outie and one of their guardians, unless the guardian's message is a reply in a chain that already contains a setup note from the bot; such a message is deleted without a reply.
 
 #### Scenario: Guardian asks a question
 - **WHEN** a guardian emails the bot, not in reply to a setup note
@@ -105,7 +110,7 @@ A message from a scout SHALL be answered from the topic's documents only when th
 - **THEN** the question is not answered and the rule reminder applies
 
 ### Requirement: Scouts who break the rule receive a reminder
-When a scout's message does not meet the copy rule, the bot SHALL reply to the scout alone with a short, fixed reminder of the rule that names the outie and that scout's guardians, unless the scout's message is a reply in a chain that already contains a reminder from the bot; such a message is deleted without a reply.
+When a scout's message does not meet the copy rule, the bot SHALL reply to the scout alone with a short, fixed reminder of the rule that names the outie and that scout's guardians other than the outie, unless the scout's message is a reply in a chain that already contains a reminder from the bot; such a message is deleted without a reply.
 
 #### Scenario: Outie missing
 - **WHEN** a scout copies their guardian but not the outie
@@ -113,7 +118,7 @@ When a scout's message does not meet the copy rule, the bot SHALL reply to the s
 
 #### Scenario: Reminder is short and fixed
 - **WHEN** the bot sends a reminder
-- **THEN** it goes To the scout only, is at most two sentences naming the outie and the scout's guardians, contains no answer, quote or model-written text, and does not include the scout's original message
+- **THEN** it goes To the scout only, is at most two sentences naming the outie and the scout's guardians other than the outie, contains no answer, quote or model-written text, and does not include the scout's original message
 
 #### Scenario: Second miss replying to the reminder
 - **GIVEN** a scout received a reminder

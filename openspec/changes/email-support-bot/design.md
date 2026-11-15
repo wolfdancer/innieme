@@ -75,6 +75,8 @@ The reminder goes To the scout alone. Copying the outie was considered and rejec
 
 > I can only answer when you copy {outie} and one of your guardians ({guardians}). Please send your question again with them copied.
 
+`{guardians}` excludes the outie when the outie is also listed as one, so the reminder never suggests the outie counts twice.
+
 The guardian setup note is also a fixed template; it goes to an adult, so its length is less critical.
 
 ### Earlier bot replies via the bot's own Message-IDs
