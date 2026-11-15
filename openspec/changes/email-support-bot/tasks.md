@@ -32,7 +32,7 @@
 
 - [ ] 6.1 Compose replies: recipients from config only (answer: To scout, Cc outie + guardians present on the original), `Re:` without stacking, `In-Reply-To`/`References` (falling back to incoming `In-Reply-To` when `References` is absent), `Auto-Submitted: auto-replied`, plain + HTML parts with raw HTML disabled; verify with tests asserting headers, that `<img src=…>` in model output is escaped in the HTML part, the `References` fallback, and that an extra Cc'd friend is excluded
 - [ ] 6.2 Implement all-or-nothing SMTP sending (`MAIL FROM`, `RCPT TO` per recipient, `RSET` and fail on any refusal, `DATA` only when all accepted); add UIDs with a permanent (5xx) refusal to an in-memory skip set; verify with fake SMTP server tests that one of three recipients refused sends no message data, a 5xx refusal is not retried on the next poll, and a 4xx refusal is
-- [ ] 6.3 Add setup-note and rule-reminder templates (placeholder wording; reminder names the scout's guardians), attachment notice, and the `outie please` reply; verify rendered text in tests
+- [ ] 6.3 Add the setup-note template (placeholder wording) and the fixed two-sentence rule reminder (To the scout only, names the outie and the scout's guardians, no quoted original or model text), attachment notice, and the `outie please` reply; verify rendered text in tests, including that the reminder has only the scout as recipient, is at most two sentences, and contains none of the scout's message
 
 ## 7. Mailbox and poll loop
 
@@ -55,8 +55,9 @@
 - [x] 10.1 Review loop 1: retention measured from the newest `Received` header, not the sender's `Date`; delete each message right after handling instead of batching; answers via the topic's engine directly so no thread state accumulates; merged the duplicate quoted-history requirement; reworded the guardian scenario to reply chains; removed redundant in-flight UID tracking; fixed the stale "ConversationEngine untouched" claim
 - [x] 10.2 Review loop 2: raw HTML disabled when rendering replies; in-memory skip of messages whose reply was permanently refused, so the model is not re-run every poll
 - [x] 10.3 Review loop 3: dropped "one-time" from requirement titles and the proposal; scoped the retry scenario to temporary failures; listed `markdown-it-py` in the proposal's dependencies
+- [x] 10.4 Rule reminder settled with the user: To the scout only (copying just the outie still leaves one adult), a fixed two-sentence template with no quoted original or model text
 
 ## Workflow follow-up
 
-- Finalize the setup-note and reminder wording with the user.
+- Finalize the setup-note wording with the user.
 - Archive the change after review and merge.

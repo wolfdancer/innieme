@@ -20,7 +20,7 @@ Two constraints from the existing code:
 - Admin commands over email (`status`, `rescan`, `quit`).
 - Verifying the sender (DKIM/DMARC via `Authentication-Results`). A forged `From` of a scout still needs the outie and a real guardian copied, who then see the answer.
 - Reading attachments.
-- Final wording of the setup note and rule reminder (placeholders until decided).
+- Final wording of the setup note (placeholder until decided); the reminder's shape is fixed below.
 
 ## Decisions
 
@@ -66,6 +66,13 @@ answer ─▶ delete
 ```
 Auto-generated is checked first so a scout's out-of-office never earns a reminder. Retention (older than `retention_days` by the newest `Received` header, which the receiving server stamps, falling back to `Date`, which the sender's clock sets; undatable messages never expire) is checked before all of it.
 
+### Rule reminder: scout only, fixed and short
+The reminder goes To the scout alone. Copying the outie was considered and rejected: two-deep needs two adults, and adding only the outie would make the exchange look sanctioned while still one adult short. To keep a one-to-one message with a minor unambiguous, it is a fixed template, not model output, at most two sentences, with no quoted original and nothing about the question, e.g.:
+
+> I can only answer when you copy {outie} and one of your guardians ({guardians}). Please send your question again with them copied.
+
+The guardian setup note is also a fixed template; it goes to an adult, so its length is less critical.
+
 ### Earlier bot replies via the bot's own Message-IDs
 Outgoing replies get `Message-ID: <innieme.{kind}.{uuid}@{mailbox domain}>` with `kind` ∈ `answer`, `reminder`, `setup`. A reply carries its ancestors' IDs in `References`/`In-Reply-To`, so "this chain already has a reminder" is a regex over two headers. Stateless and restart-proof. Headers record ancestry, not the whole thread: two sibling replies to the same original each look like the first, so each can earn a note. The spec states this limitation. Alternative: an in-memory set — lost on restart, and still per process.
 
@@ -104,5 +111,5 @@ New platform; no existing behavior changes. Deploy: `cp email_config.example.yam
 
 ## Open Questions
 
-- Wording of the guardian setup note and the scout rule reminder (placeholders until then).
+- Wording of the guardian setup note (placeholder until then) and final polish of the two-sentence reminder.
 - Which reply-parsing library, decided by a quick comparison against sample Gmail/Outlook/Apple Mail replies.
