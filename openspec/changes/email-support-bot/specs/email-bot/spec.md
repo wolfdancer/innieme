@@ -89,11 +89,16 @@ A message from a guardian SHALL be answered with a setup note explaining that th
 - **THEN** nothing is sent
 
 ### Requirement: Scouts are answered only with the outie and their own guardian copied
-A message from a scout SHALL be answered from the topic's documents only when the outie's address and at least one of that scout's own guardians appear in `To` or `Cc`. A guardian of a different scout SHALL NOT count.
+A message from a scout SHALL be answered from the topic's documents only when the outie's address and at least one of that scout's own guardians appear in `To` or `Cc`. A guardian of a different scout SHALL NOT count, and the outie SHALL NOT count as the guardian, so two different adults are always copied.
 
 #### Scenario: Rule met
 - **WHEN** a scout sends a question with the outie and their mother in Cc
 - **THEN** the bot answers the question
+
+#### Scenario: Outie is also the scout's guardian
+- **GIVEN** the outie is listed as one of the scout's guardians
+- **WHEN** the scout copies only the outie
+- **THEN** the question is not answered and the rule reminder applies, because only one adult is copied
 
 #### Scenario: Another scout's guardian
 - **WHEN** a scout copies the outie and a guardian listed only for a different scout
@@ -177,7 +182,7 @@ Every reply SHALL use the subject `Re: <original subject>` (without stacking `Re
 - **THEN** the answer's subject is "Re: Campout gear" and it appears in the same thread in the scout's mail client
 
 ### Requirement: Configuration is validated at startup
-The email configuration SHALL fail to load when a scout has no guardians, when an address is listed both as a scout and as a guardian in the same topic, or when a topic's mailbox address is also its outie, a scout or a guardian. The error SHALL name the offending address.
+The email configuration SHALL fail to load when a scout has no guardian other than the outie, when an address is listed both as a scout and as a guardian in the same topic, or when a topic's mailbox address is also its outie, a scout or a guardian. The error SHALL name the offending address.
 
 #### Scenario: Scout without guardians
 - **WHEN** the config lists a scout with an empty guardians list

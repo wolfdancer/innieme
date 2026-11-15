@@ -39,7 +39,7 @@ EmailBotConfig        tokens-style secrets inline; llm/embedding/retrieval field
                                              smtp_host, smtp_port=587}
                                    scouts[]: {email, guardians[]}
 ```
-`outie_id` as a property lets `ConversationEngine` read the outie without changes to how it does so. Addresses are compared case-insensitively and normalized at load. Validation per the spec (scout without guardians, scout/guardian overlap, mailbox address colliding with a person). `docs_dir` existence and misplaced-`docs_exclude` checks are copied from the Slack config. Alternative considered: extracting a shared base config for all three platforms — worthwhile, but a refactor of two working platforms; out of scope here.
+`outie_id` as a property lets `ConversationEngine` read the outie without changes to how it does so. Addresses are compared case-insensitively and normalized at load. Validation per the spec (scout without a guardian other than the outie, scout/guardian overlap, mailbox address colliding with a person). `docs_dir` existence and misplaced-`docs_exclude` checks are copied from the Slack config. Alternative considered: extracting a shared base config for all three platforms — worthwhile, but a refactor of two working platforms; out of scope here.
 
 ### POP3 sessions: short, keyed by UIDL
 POP3 only commits `DELE` on a clean `QUIT`, and servers drop idle sessions; holding one open while the model answers (seconds to a minute per message) risks rolling back every delete in that session and re-answering. So each poll:
@@ -65,6 +65,9 @@ outie + own guardian in To/Cc? ─no─▶ reminder unless one is in its chain �
 answer ─▶ delete
 ```
 Auto-generated is checked first so a scout's out-of-office never earns a reminder. Retention (older than `retention_days` by the newest `Received` header, which the receiving server stamps, falling back to `Date`, which the sender's clock sets; undatable messages never expire) is checked before all of it.
+
+### Outie as a guardian
+Allowed: a leader's own child can be a scout with the leader listed as a guardian. The copy rule still needs two different adults, so the outie never counts as the guardian, and a scout must have at least one guardian besides the outie or they could never be answered.
 
 ### Rule reminder: scout only, fixed and short
 The reminder goes To the scout alone. Copying the outie was considered and rejected: two-deep needs two adults, and adding only the outie would make the exchange look sanctioned while still one adult short. To keep a one-to-one message with a minor unambiguous, it is a fixed template, not model output, at most two sentences, with no quoted original and nothing about the question, e.g.:

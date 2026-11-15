@@ -8,7 +8,7 @@
 ## 2. Configuration
 
 - [ ] 2.1 Add `email_bot_config.py` (`EmailBotConfig` → `OutieConfig` with `outie_email` and `outie_id` property → `TopicConfig` with `mailbox` and `scouts[{email, guardians}]`), bot-level fields matching `SlackBotConfig` plus `poll_interval_seconds=300`, `retention_days=30`, back-references, case-insensitive addresses; verify with tests that a valid config loads and `Topic`/`ConversationEngine` can be built from it with `embedding_model: fake`
-- [ ] 2.2 Add load-time validation (scout without guardians, scout also a guardian, mailbox address equal to outie/scout/guardian, misplaced `docs_exclude`, missing `docs_dir`); verify each case fails in a test whose error names the address
+- [ ] 2.2 Add load-time validation (scout without a guardian other than the outie, scout also a guardian, mailbox address equal to outie/scout/guardian, misplaced `docs_exclude`, missing `docs_dir`); verify each case fails in a test whose error names the address
 - [ ] 2.3 Add `email_config.example.yaml` with comments (Dynadot POP3/SMTP example, scouts with guardians) and `/email_config.yaml` to `.gitignore`; verify the example loads in a test
 
 ## 3. Model failures
@@ -24,7 +24,7 @@
 ## 5. Classification
 
 - [ ] 5.1 Implement auto-generated detection (all headers in the spec, empty return path, delivery reports) and bounce recipient extraction; verify each signal with a fixture test
-- [ ] 5.2 Implement sender classification (unknown / outie / guardian / scout) and the copy rule (outie + one of the scout's own guardians in To/Cc); verify with tests including another scout's guardian not counting
+- [ ] 5.2 Implement sender classification (unknown / outie / guardian / scout) and the copy rule (outie + one of the scout's own guardians in To/Cc); verify with tests including another scout's guardian not counting and the outie not counting as the scout's guardian
 - [ ] 5.3 Implement bot Message-IDs `<innieme.{kind}.{uuid}@domain>` and prior-reply detection from `References`/`In-Reply-To`; verify in tests that a reply to a reminder gets no second reminder, two sibling replies to the same original each get one, and reminder → corrected question → answer → rule-breaking reply gets no reminder
 - [ ] 5.4 Implement retention by the newest `Received` header, falling back to `Date`, undatable never expiring; verify with tests at 29/31 days, a 40-days-old `Date` with a fresh `Received` (not expired), and no date
 
@@ -56,6 +56,7 @@
 - [x] 10.2 Review loop 2: raw HTML disabled when rendering replies; in-memory skip of messages whose reply was permanently refused, so the model is not re-run every poll
 - [x] 10.3 Review loop 3: dropped "one-time" from requirement titles and the proposal; scoped the retry scenario to temporary failures; listed `markdown-it-py` in the proposal's dependencies
 - [x] 10.4 Rule reminder settled with the user: To the scout only (copying just the outie still leaves one adult), a fixed two-sentence template with no quoted original or model text
+- [x] 10.5 Outie may also be a scout's guardian (user decision), but never counts as the guardian for the copy rule; each scout needs a guardian besides the outie
 
 ## Workflow follow-up
 
